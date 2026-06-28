@@ -1,0 +1,148 @@
+import { z } from "zod";
+import {
+  estadoPersonaSchema,
+  estadoVerificacionSchema,
+  fuenteDatoSchema,
+  plataformaCanalSchema,
+} from "./enums.js";
+
+// Esquemas zod del dominio, alineados con migrations/0001_init.sql y con la
+// clasificacion de privacidad de docs/data-model.md.
+//
+// Convencion:
+//   - `*CreateSchema`  : entrada que envia un canal al registrar (input minimo).
+//   - `*Schema`        : registro completo del dominio (lo que vive en la BD).
+//   - `Public*`        : vista publica, SIN datos de contacto (guardrail #1).
+//
+// `contact_id` es INTERNO: presente en el registro completo, jamas en la vista publica.
+
+// ── Primitivas reutilizables ────────────────────────────────────────────────
+
+/** uuid de la BD (gen_random_uuid). */
+export const idSchema = z.uuid();
+
+/**
+ * Edad valida: 0..129 o null. Espeja la constraint SQL
+ * `edad is null or (edad >= 0 and edad < 130)`.
+ */
+export const edadSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(129)
+  .nullable();
+
+const nombreObligatorio = z.string().trim().min(1);
+const textoOpcional = z.string().trim().min(1).nullable();
+const urlOpcional = z.url().nullable();
+
+// ── Person ──────────────────────────────────────────────────────────────────
+
+/**
+ * Entrada de creacion de persona (lo que envia un canal).
+ * No incluye id, estado, verificacion ni timestamps: los fija el dominio/BD.
+ * `contact_id` es opcional aqui porque el contacto se resuelve/crea aparte;
+ * nunca es un dato publico.
+ */
+export const personCreateSchema = z.object({
+  nombre: nombreObligatorio,
+  apellidos: textoOpcional.optional(),
+  edad: edadSchema.optional(),
+  zona: textoOpcional.optional(),
+  descripcion: textoOpcional.optional(),
+  foto_url: urlOpcional.optional(),
+  fuente: fuenteDatoSchema.optional(),
+  contact_id: idSchema.nullable().optional(),
+});
+export type PersonCreate = z.infer<typeof personCreateSchema>;
+
+/** Registro completo de persona (espeja la tabla `persons`). */
+export const personSchema = z.object({
+  id: idSchema,
+  nombre: nombreObligatorio,
+  apellidos: textoOpcional,
+  edad: edadSchema,
+  zona: textoOpcional,
+  descripcion: textoOpcional,
+  foto_url: urlOpcional,
+  estado: estadoPersonaSchema,
+  fuente: fuenteDatoSchema,
+  verificacion: estadoVerificacionSchema,
+  // INTERNO — nunca en respuestas publicas.
+  contact_id: idSchema.nullable(),
+  created_at: z.iso.datetime({ offset: true }),
+  updated_at: z.iso.datetime({ offset: true }),
+});
+export type Person = z.infer<typeof personSchema>;
+
+/** Vista publica de persona: sin `contact_id` ni dato de contacto alguno. */
+export const publicPersonSchema = personSchema.omit({ contact_id: true });
+export type PublicPerson = z.infer<typeof publicPersonSchema>;
+
+// ── Pet ─────────────────────────────────────────────────────────────────────
+
+/** Entrada de creacion de mascota. */
+export const petCreateSchema = z.object({
+  nombre: textoOpcional.optional(),
+  tipo: textoOpcional.optional(),
+  raza: textoOpcional.optional(),
+  zona: textoOpcional.optional(),
+  foto_url: urlOpcional.optional(),
+  fuente: fuenteDatoSchema.optional(),
+  contact_id: idSchema.nullable().optional(),
+});
+export type PetCreate = z.infer<typeof petCreateSchema>;
+
+/** Registro completo de mascota (espeja la tabla `pets`). */
+export const petSchema = z.object({
+  id: idSchema,
+  nombre: textoOpcional,
+  tipo: textoOpcional,
+  raza: textoOpcional,
+  zona: textoOpcional,
+  foto_url: urlOpcional,
+  estado: estadoPersonaSchema,
+  fuente: fuenteDatoSchema,
+  verificacion: estadoVerificacionSchema,
+  // INTERNO — nunca en respuestas publicas.
+  contact_id: idSchema.nullable(),
+  created_at: z.iso.datetime({ offset: true }),
+  updated_at: z.iso.datetime({ offset: true }),
+});
+export type Pet = z.infer<typeof petSchema>;
+
+/** Vista publica de mascota: sin `contact_id`. */
+export const publicPetSchema = petSchema.omit({ contact_id: true });
+export type PublicPet = z.infer<typeof publicPetSchema>;
+
+// ── Search ──────────────────────────────────────────────────────────────────
+
+/** Objetivo de una busqueda. */
+export const tipoBusquedaSchema = z.enum(["persona", "mascota"]);
+export type TipoBusqueda = z.infer<typeof tipoBusquedaSchema>;
+
+/**
+ * Entrada de creacion de busqueda (quien busca a quien).
+ * `buscador_contact_id` es SENSIBLE: se usa solo para notificar internamente.
+ */
+export const searchCreateSchema = z.object({
+  tipo: tipoBusquedaSchema,
+  target_nombre: textoOpcional.optional(),
+  target_descripcion: textoOpcional.optional(),
+  zona: textoOpcional.optional(),
+  buscador_contact_id: idSchema.nullable().optional(),
+});
+export type SearchCreate = z.infer<typeof searchCreateSchema>;
+
+/** Registro completo de busqueda (espeja la tabla `searches`). */
+export const searchSchema = z.object({
+  id: idSchema,
+  tipo: tipoBusquedaSchema,
+  target_nombre: textoOpcional,
+  target_descripcion: textoOpcional,
+  zona: textoOpcional,
+  // SENSIBLE — nunca en respuestas publicas.
+  buscador_contact_id: idSchema.nullable(),
+  created_at: z.iso.datetime({ offset: true }),
+});
+export type Search = z.infer<typeof searchSchema>;

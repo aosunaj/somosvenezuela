@@ -1,0 +1,26 @@
+# Dependencias
+node_modules/
+.pnpm-store/
+
+# Build
+dist/
+build/
+.next/
+.turbo/
+
+# Entorno y secretos — NUNCA subir
+.env
+.env.*
+!.env.example
+
+# Logs / temporales
+*.log
+.DS_Store
+coverage/
+
+# Datos locales / subidas
+uploads/
+tmp/
+
+# Metadata de WSL/Windows
+*:Zone.Identifier

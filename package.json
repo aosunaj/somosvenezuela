@@ -1,0 +1,24 @@
+{
+  "name": "somos-venezuela",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev:backend": "pnpm --filter backend dev",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "db:migrate": "pnpm --filter db migrate",
+    "db:seed": "pnpm --filter db seed",
+    "db:check": "pnpm --filter db check",
+    "guardrails:scan": "node scripts/guardrails-scan.mjs",
+    "ai:eval": "pnpm --filter ai eval",
+    "verify": "pnpm build && pnpm typecheck && pnpm lint && pnpm test && pnpm guardrails:scan && pnpm db:check",
+    "verify:ci": "pnpm build && pnpm typecheck && pnpm lint && pnpm test && pnpm guardrails:scan"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

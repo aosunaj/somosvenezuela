@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      # Sin secretos reales en CI: los servicios externos (Claude, Telegram,
+      # WhatsApp, Cloudinary, satélite) se mockean en los tests.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # verify:ci = build (topológico) + typecheck + lint + test + guardrails:scan.
+      - run: pnpm verify:ci
+
+# Pendiente (se añade cuando exista la pieza):
+#  - db:check: necesita un proyecto Supabase (URL + service_role). No va en CI por
+#    ahora; se valida en local/staging. Cuando haya credenciales de test en GitHub
+#    Secrets, se añade un paso `pnpm db:check` con esos env.
+#  - ai:eval (packages/ai): llega en Fase 3. Se sumará como job aparte no bloqueante
+#    (continue-on-error) una vez exista el set dorado.
