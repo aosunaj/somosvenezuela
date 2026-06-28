@@ -8,6 +8,12 @@ import type { AppDeps } from "./deps.js";
 import { errorHandler } from "./errors.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerPersonRoutes } from "./routes/persons.js";
+import { registerPetRoutes } from "./routes/pets.js";
+import { registerZoneRoutes } from "./routes/zones.js";
+import { registerNeedRoutes } from "./routes/needs.js";
+import { registerRegisterLinkedRoutes } from "./routes/register-linked.js";
+import { registerDeleteSecureRoutes } from "./routes/delete-secure.js";
+import { registerNotificationsRoutes } from "./routes/notifications.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerSearchesRoutes } from "./routes/searches.js";
 
@@ -61,6 +67,23 @@ export async function buildApp(
   registerPersonRoutes(app, deps);
   registerSearchesRoutes(app, deps);
   registerSearchRoutes(app, deps);
+  // Mascotas + mapa (lado publico).
+  registerPetRoutes(app, { petRepo: deps.petRepo, petSearchRepo: deps.petSearchRepo });
+  registerZoneRoutes(app, { zoneRepo: deps.zoneRepo, serviceToken: deps.serviceToken });
+  registerNeedRoutes(app, { needRepo: deps.needRepo, serviceToken: deps.serviceToken });
+  // Vinculo de canal, borrado seguro y notificaciones (lado interno/sensible).
+  registerRegisterLinkedRoutes(app, {
+    personRepo: deps.personRepo,
+    channelLinkRepo: deps.channelLinkRepo,
+  });
+  registerDeleteSecureRoutes(app, {
+    channelLinkRepo: deps.channelLinkRepo,
+    secureDeleteRepo: deps.secureDeleteRepo,
+  });
+  registerNotificationsRoutes(app, {
+    notificationRepo: deps.notificationRepo,
+    serviceToken: deps.serviceToken,
+  });
 
   return app;
 }

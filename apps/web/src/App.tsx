@@ -1,8 +1,12 @@
 import type { JSX } from "react";
-import { SearchContainer } from "./containers/SearchContainer.tsx";
+// CAMBIO (Fase 5/6): la web ahora ofrece tres vistas (personas, mascotas, mapa).
+// MainView mantiene la navegacion por pestanas y monta el contenedor de cada
+// seccion; antes aqui se montaba SearchContainer directamente.
+import { MainView } from "./containers/MainView.tsx";
 
-// Shell de la aplicacion: cabecera con la identidad del proyecto, el contenedor
-// de busqueda y un pie con la promesa de privacidad. Tono calido y digno.
+// Shell de la aplicacion: cabecera con la identidad del proyecto, las vistas
+// principales (busqueda de personas/mascotas y mapa) y un pie con la promesa de
+// privacidad. Tono calido y digno.
 export function App(): JSX.Element {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -12,11 +16,11 @@ export function App(): JSX.Element {
             SomosVenezuela
           </p>
           <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">
-            Buscar a personas desaparecidas
+            Buscamos a quienes faltan y reunimos a las familias
           </h1>
           <p className="mt-2 max-w-2xl text-slate-600">
             Una red de solidaridad para reunir a las familias tras el terremoto.
-            Escribe un nombre o una descripcion y te mostramos las coincidencias.
+            Busca personas o mascotas y consulta el mapa de zonas y necesidades.
           </p>
           <p className="mt-3 text-sm font-medium text-indigo-700">
             Nadie se queda atras.
@@ -25,7 +29,7 @@ export function App(): JSX.Element {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-8">
-        <SearchContainer />
+        <MainView />
       </main>
 
       <footer className="border-t border-slate-200 bg-white">

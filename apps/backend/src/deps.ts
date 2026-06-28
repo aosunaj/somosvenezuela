@@ -1,4 +1,14 @@
-import type { PersonRepo, SearchRepo } from "db";
+import type {
+  ChannelLinkRepo,
+  NeedRepo,
+  NotificationRepo,
+  PersonRepo,
+  PetRepo,
+  PetSearchRepo,
+  SearchRepo,
+  SecureDeleteRepo,
+  ZoneRepo,
+} from "db";
 
 // Dependencias que necesita la API para funcionar.
 //
@@ -12,6 +22,18 @@ export interface AppDeps {
   personRepo: PersonRepo;
   /** Repositorio de busquedas (flujo interno; nunca expone buscador_contact_id). */
   searchRepo: SearchRepo;
+  /** Mascotas: alta y busqueda publica difusa. */
+  petRepo: PetRepo;
+  petSearchRepo: PetSearchRepo;
+  /** Mapa: zonas afectadas y sus necesidades (lectura publica, alta por voluntarios). */
+  zoneRepo: ZoneRepo;
+  needRepo: NeedRepo;
+  /** Vinculo usuario<->canal (channels/opt_in) para registro y notificacion. */
+  channelLinkRepo: ChannelLinkRepo;
+  /** Cola de notificaciones (entrega por el canal del usuario). */
+  notificationRepo: NotificationRepo;
+  /** Borrado seguro por el dueno (derecho al olvido). */
+  secureDeleteRepo: SecureDeleteRepo;
   /**
    * Secreto de servicio para operaciones privilegiadas (p. ej. DELETE).
    * Si esta vacio o indefinido, esas operaciones quedan deshabilitadas (responden 401).

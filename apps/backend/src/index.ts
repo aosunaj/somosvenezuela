@@ -27,6 +27,13 @@ async function main(): Promise<void> {
   const deps: AppDeps = {
     personRepo: repos.persons,
     searchRepo: repos.searches,
+    petRepo: repos.pets,
+    petSearchRepo: repos.petSearch,
+    zoneRepo: repos.zones,
+    needRepo: repos.needs,
+    channelLinkRepo: repos.channelLinks,
+    notificationRepo: repos.notifications,
+    secureDeleteRepo: repos.secureDelete,
     // Secreto de servicio para operaciones privilegiadas (DELETE). Si no esta
     // definido, esas operaciones quedan deshabilitadas (responden 401).
     serviceToken: process.env["SERVICE_TOKEN"],
