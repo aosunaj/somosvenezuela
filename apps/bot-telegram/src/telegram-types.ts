@@ -16,6 +16,10 @@ const telegramChatSchema = z.object({
 const telegramMessageSchema = z.object({
   chat: telegramChatSchema,
   text: z.string().optional(),
+  // Texto al pie de una foto/video: Telegram NO lo pone en `text`, sino en `caption`.
+  // Lo leemos para no perder lo que la persona escribe al mandar una foto (caso muy
+  // comun: foto del familiar + descripcion). El archivo de la foto aun no se procesa.
+  caption: z.string().optional(),
 });
 
 /**

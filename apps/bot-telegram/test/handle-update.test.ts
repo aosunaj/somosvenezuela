@@ -476,16 +476,48 @@ describe("comandos y updates raros", () => {
     expect(transport.allText()).toContain("SomosVenezuela");
   });
 
-  it("ignora sin crashear un update que no es mensaje de texto", async () => {
+  it("ignora sin crashear updates sin mensaje o con forma invalida", async () => {
     const backend = new FakeBackend();
     const { deps, transport } = makeDeps(backend);
 
-    // Update sin `message` y update con mensaje sin `text`: ambos se ignoran.
+    // Sin `message` y con forma totalmente invalida: no hay chat a quien responder,
+    // se ignoran en silencio.
     await handleUpdate({ update_id: 1 }, deps);
-    await handleUpdate({ update_id: 2, message: { chat: { id: CHAT } } }, deps);
-    // Update con forma totalmente invalida.
     await handleUpdate({ basura: true }, deps);
 
     expect(transport.sent).toHaveLength(0);
+  });
+});
+
+describe("fotos y contenido sin texto", () => {
+  it("usa el caption de una foto como texto: no pierde lo que la persona escribe al pie", async () => {
+    const backend = new FakeBackend();
+    const { deps, sessions } = makeDeps(backend);
+
+    await send(deps, CHAT, BUTTON.registrar); // entra al paso 'nombre'
+    // La persona manda una FOTO con el nombre al pie (caption), no como texto plano.
+    await handleUpdate(
+      { update_id: 50, message: { chat: { id: CHAT }, caption: "Maria Sintetica" } },
+      deps,
+    );
+
+    // El caption se consumio como respuesta: el flujo avanzo y guardo el nombre.
+    expect(sessions.get(CHAT)).toEqual({
+      flow: "register",
+      step: "apellidos",
+      draft: { nombre: "Maria Sintetica" },
+    });
+  });
+
+  it("guia en vez de quedar en silencio cuando llega contenido sin texto (foto sola, sticker)", async () => {
+    const backend = new FakeBackend();
+    const { deps, transport } = makeDeps(backend);
+
+    // Mensaje real de un chat pero sin texto ni caption (foto sola / sticker / ubicacion).
+    await handleUpdate({ update_id: 60, message: { chat: { id: CHAT } } }, deps);
+
+    // No se descarta en silencio: respondemos una guia para que no quede colgada.
+    expect(transport.sent).toHaveLength(1);
+    expect(transport.allText()).toContain("solo puedo leer mensajes de texto");
   });
 });
