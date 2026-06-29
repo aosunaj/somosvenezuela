@@ -20,6 +20,9 @@ importers:
       '@fastify/rate-limit':
         specifier: ^11.1.0
         version: 11.1.0
+      ai:
+        specifier: workspace:*
+        version: link:../../packages/ai
       core:
         specifier: workspace:*
         version: link:../../packages/core
