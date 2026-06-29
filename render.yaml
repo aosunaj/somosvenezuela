@@ -1,0 +1,71 @@
+# Blueprint de despliegue de SomosVenezuela en Render.
+#
+# Define DOS servicios web (gratuitos): el backend (API Fastify) y el bot de
+# WhatsApp (webhook de Meta + poller de notificaciones). Ambos exponen una URL
+# publica https://<servicio>.onrender.com.
+#
+# Los SECRETOS no van aqui: cada variable con `sync: false` se carga a mano en el
+# dashboard de Render (Environment) por servicio. Nunca commitear valores.
+#
+# IMPORTANTE sobre el plan gratuito: los servicios web `free` de Render se DUERMEN
+# tras ~15 min sin trafico. Eso pausa el poller de notificaciones y agrega arranque
+# en frio al webhook (Meta reintenta). Para entrega siempre-activa, subir el bot de
+# WhatsApp a un plan que no duerma.
+#
+# El bot de Telegram (long polling, sin URL publica) NO esta aqui: en Render seria un
+# `worker`, que no entra en el plan gratuito. Correrlo aparte (local o plataforma con
+# worker gratis) con TELEGRAM_BOT_TOKEN + BACKEND_URL + SERVICE_TOKEN.
+
+services:
+  # ── Backend API (publico: lo consumen la web y los bots) ────────────────────
+  - type: web
+    name: somosvenezuela-backend
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: pnpm install --frozen-lockfile && pnpm -r build
+    startCommand: pnpm --filter backend start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Secreto compartido para endpoints internos (DELETE, matches/*, notifications/*).
+      # DEBE ser el MISMO valor que el del bot de WhatsApp.
+      - key: SERVICE_TOKEN
+        sync: false
+
+  # ── Bot de WhatsApp (publico: webhook de Meta en /webhook + poller) ──────────
+  - type: web
+    name: somosvenezuela-bot-whatsapp
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: pnpm install --frozen-lockfile && pnpm -r build
+    startCommand: pnpm --filter bot-whatsapp start
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # Access token de la WhatsApp Cloud API (Meta). Secreto.
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      # Token que ELEGIS vos para la verificacion GET del webhook (= el que pones en Meta).
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      # App Secret de la app de Meta (verifica la firma HMAC de cada POST). Secreto.
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      # URL PUBLICA del backend de arriba (https://somosvenezuela-backend.onrender.com).
+      # Se completa tras el primer deploy del backend.
+      - key: BACKEND_URL
+        sync: false
+      # El MISMO SERVICE_TOKEN que el backend, o el poller no entrega notificaciones.
+      - key: SERVICE_TOKEN
+        sync: false
