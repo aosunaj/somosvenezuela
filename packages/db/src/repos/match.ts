@@ -133,6 +133,9 @@ export interface ReunionParteContacto {
 export type RequestReunionResult =
   | { readonly outcome: "not_found" }
   | { readonly outcome: "minor_blocked" }
+  // El reencuentro ya estaba gestionado (cerrado por rechazo/intercambio o ya en
+  // curso): NO se reabre ni se re-notifica. Un "no" del registrante queda firme.
+  | { readonly outcome: "already_handled" }
   | {
       readonly outcome: "requested";
       readonly matchId: string;
@@ -525,16 +528,29 @@ export function createMatchRepo(client: DbClient): MatchRepo {
       // 3) Registra el consentimiento SINCRONO del buscador ('aceptado') y SOLICITA el
       //    del registrante ('solicitado'); el reencuentro queda 'pendiente'. El contacto
       //    NO se comparte aqui: solo dejamos a quien avisar (sin telefono).
-      const { error: updError } = await client
+      //
+      //    GUARDA (un "NO" queda firme): la UPDATE SOLO dispara si el reencuentro esta
+      //    en su estado inicial ('inactiva'). Asi re-pedir NUNCA reabre un match ya
+      //    'rechazada', 'intercambiado' o 'pendiente': la condicion no matchea ninguna
+      //    fila y .select('id') devuelve vacio. La decision del registrante (incluido
+      //    su "no") es definitiva y no se sobrescribe con una nueva solicitud.
+      const { data: updated, error: updError } = await client
         .from("matches")
         .update({
           consentimiento_buscador: "aceptado",
           consentimiento_registrante: "solicitado",
           reunion_estado: "pendiente",
         })
-        .eq("id", matchId);
+        .eq("id", matchId)
+        .eq("reunion_estado", "inactiva")
+        .select("id");
       if (updError) {
         throw new DbError(`No se pudo iniciar el reencuentro: ${updError.message}`, updError.code);
+      }
+      // 0 filas afectadas: el reencuentro NO estaba 'inactiva' (ya cerrado o en curso).
+      // No reabrimos ni re-notificamos: devolvemos un resultado claro de "ya gestionado".
+      if (updated === null || (Array.isArray(updated) && updated.length === 0)) {
+        return { outcome: "already_handled" };
       }
 
       // 4) A quien avisar: el registrante (persons.contact_id de la persona elegida).
@@ -575,13 +591,22 @@ export function createMatchRepo(client: DbClient): MatchRepo {
       const matchId = data.id;
 
       // 2) RECHAZO: cierra el reencuentro sin compartir NADA y avisa al buscador.
+      //    GUARDA (idempotencia / carrera): la UPDATE SOLO actua sobre una solicitud aun
+      //    'solicitado'. Si otra llamada ya la resolvio (acepto o rechazo), .select
+      //    devuelve vacio y NO re-notificamos: la primera respuesta gana.
       if (decision === "rechazado") {
-        const { error: rejError } = await client
+        const { data: rejected, error: rejError } = await client
           .from("matches")
           .update({ consentimiento_registrante: "rechazado", reunion_estado: "rechazada" })
-          .eq("id", matchId);
+          .eq("id", matchId)
+          .eq("consentimiento_registrante", "solicitado")
+          .select("id");
         if (rejError) {
           throw new DbError(`No se pudo registrar el rechazo: ${rejError.message}`, rejError.code);
+        }
+        if (rejected === null || (Array.isArray(rejected) && rejected.length === 0)) {
+          // Otra llamada concurrente ya gestiono esta solicitud: no la re-procesamos.
+          return { outcome: "not_found" };
         }
         const ctx = await this.getConfirmContext(matchId);
         return {
@@ -594,13 +619,24 @@ export function createMatchRepo(client: DbClient): MatchRepo {
         };
       }
 
-      // 3) ACEPTACION del registrante. Marca su consentimiento.
-      const { error: accError } = await client
+      // 3) ACEPTACION del registrante. Marca su consentimiento de forma ATOMICA e
+      //    IDEMPOTENTE: la UPDATE SOLO matchea si el registrante seguia en 'solicitado'.
+      //    Dos /conectar concurrentes: solo el PRIMERO afecta una fila; el segundo
+      //    obtiene 0 filas y para aqui (no avanza al intercambio). Asi el telefono se
+      //    entrega UNA sola vez. Reusar la respuesta del primero seria 'exchanged', pero
+      //    como ya se proceso, el segundo no debe re-entregar: devolvemos accepted_waiting.
+      const { data: accepted, error: accError } = await client
         .from("matches")
         .update({ consentimiento_registrante: "aceptado" })
-        .eq("id", matchId);
+        .eq("id", matchId)
+        .eq("consentimiento_registrante", "solicitado")
+        .select("id");
       if (accError) {
         throw new DbError(`No se pudo registrar la aceptacion: ${accError.message}`, accError.code);
+      }
+      if (accepted === null || (Array.isArray(accepted) && accepted.length === 0)) {
+        // Otra llamada ya tomo la solicitud: no avanzamos al intercambio (no re-entregar).
+        return { outcome: "accepted_waiting", matchId };
       }
 
       // 4) DEFENSA EN PROFUNDIDAD: el intercambio EXIGE que el buscador tambien este
@@ -611,12 +647,22 @@ export function createMatchRepo(client: DbClient): MatchRepo {
 
       // 5) DOBLE SI: marca 'intercambiado' y resuelve el contacto de cada parte. Este
       //    es el UNICO punto donde se leen los telefonos para compartirlos punto a punto.
-      const { error: exError } = await client
+      //    GUARDA (carrera): la transicion a 'intercambiado' SOLO ocurre desde
+      //    'pendiente'. Si otra llamada ya intercambio, .select devuelve vacio y NO
+      //    leemos telefonos ni los entregamos por segunda vez (entrega "exactamente una").
+      const { data: exchangedRows, error: exError } = await client
         .from("matches")
         .update({ reunion_estado: "intercambiado" })
-        .eq("id", matchId);
+        .eq("id", matchId)
+        .eq("reunion_estado", "pendiente")
+        .select("id");
       if (exError) {
         throw new DbError(`No se pudo completar el intercambio: ${exError.message}`, exError.code);
+      }
+      if (exchangedRows === null || (Array.isArray(exchangedRows) && exchangedRows.length === 0)) {
+        // El reencuentro ya no estaba 'pendiente' (otra llamada lo intercambio): NO
+        // leemos ni entregamos contacto otra vez. El telefono se entrego una sola vez.
+        return { outcome: "accepted_waiting", matchId };
       }
 
       const ctx = await this.getConfirmContext(matchId);
