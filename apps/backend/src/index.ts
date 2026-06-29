@@ -36,6 +36,7 @@ async function main(): Promise<void> {
     notificationRepo: repos.notifications,
     matchRepo: repos.matches,
     secureDeleteRepo: repos.secureDelete,
+    personStateAuditRepo: repos.personStateAudit,
     // Secreto de servicio para operaciones privilegiadas (DELETE). Si no esta
     // definido, esas operaciones quedan deshabilitadas (responden 401).
     serviceToken: process.env["SERVICE_TOKEN"],

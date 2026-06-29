@@ -109,6 +109,7 @@ export async function buildApp(
     channelLinkRepo: deps.channelLinkRepo,
     secureDeleteRepo: deps.secureDeleteRepo,
     personRepo: deps.personRepo,
+    personStateAuditRepo: deps.personStateAuditRepo,
   });
   registerNotificationsRoutes(app, {
     notificationRepo: deps.notificationRepo,

@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { plataformaCanalSchema, type PlataformaCanal } from "core";
-import type { ChannelLinkRepo, PersonRepo, SecureDeleteRepo } from "db";
+import type {
+  ChannelLinkRepo,
+  PersonRepo,
+  PersonStateAuditRepo,
+  SecureDeleteRepo,
+} from "db";
 import { apiError } from "../errors.js";
 import { idParamsSchema } from "../schemas.js";
 import { sensitiveRouteRateLimit } from "../rate-limit.js";
@@ -27,6 +32,8 @@ export interface MarkFoundSecureDeps {
   secureDeleteRepo: SecureDeleteRepo;
   /** Repo de personas: aplica el cambio de estado (markFound). */
   personRepo: PersonRepo;
+  /** Auditoria de cambios de estado sensibles (guardrail #8): quien + cuando. */
+  personStateAuditRepo: PersonStateAuditRepo;
 }
 
 // Credenciales de propiedad del canal. Aceptadas en el body; con respaldo por
@@ -113,6 +120,19 @@ export function registerMarkFoundSecureRoutes(
 
       // Reporte del dueno: encontrada con vida, SIN verificar (nunca 'verificada').
       await deps.personRepo.markFound(personId);
+
+      // Auditoria del cambio sensible (guardrail #8: quien + cuando + estado nuevo).
+      // QUIEN = el contacto dueno del canal que acaba de pasar la autorizacion.
+      // CUANDO lo fija la BD (default now()). Dejamos estado_anterior nulo: leerlo
+      // exigiria una consulta extra y el repo `markFound` no lo devuelve; el evento
+      // ya identifica al autor, el instante y el estado resultante. Se registra DESPUES
+      // del cambio para no auditar transiciones que no llegaron a aplicarse.
+      await deps.personStateAuditRepo.record({
+        personId,
+        estadoNuevo: "encontrada_viva",
+        changedByContactId: ownerContactId,
+      });
+
       return reply.code(200).send({ ok: true });
     },
   });

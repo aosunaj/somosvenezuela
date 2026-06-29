@@ -4,6 +4,7 @@ import { buildApp } from "../src/app.js";
 import {
   makeFakeMatchRepo,
   makeFakePersonRepo,
+  makeFakePersonStateAuditRepo,
   makeFakeSearchRepo,
   makeRepoCalls,
   SYNTH_CONTACT_ID,
@@ -22,6 +23,7 @@ beforeEach(async () => {
       personRepo: makeFakePersonRepo(calls),
       searchRepo: makeFakeSearchRepo(calls),
       matchRepo: makeFakeMatchRepo(calls),
+      personStateAuditRepo: makeFakePersonStateAuditRepo(calls),
       serviceToken: "token-de-servicio-sintetico",
     },
     { rateLimitMax: 1000 },

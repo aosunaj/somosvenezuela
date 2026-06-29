@@ -135,6 +135,25 @@ export interface MatchRow {
   created_at: string;
 }
 
+// ── person_state_changes (AUDITORIA, INTERNA) ────────────────────────────────
+
+/**
+ * Fila de la tabla `person_state_changes` (migrations/0005). Auditoria de cambios
+ * de estado sensibles de personas (guardrail #8: quien + cuando). INTERNA: solo
+ * backend. `changed_by_contact_id` referencia contacts (sensible), por eso la tabla
+ * tiene RLS deny-all.
+ */
+export interface PersonStateChangeRow {
+  id: string;
+  person_id: string;
+  /** Estado previo. Nulo cuando el flujo no lo conoce (p. ej. no se leyo antes). */
+  estado_anterior: EstadoPersona | null;
+  estado_nuevo: EstadoPersona;
+  /** Contacto que provoco el cambio (el dueno del canal en el rescatado). */
+  changed_by_contact_id: string | null;
+  changed_at: string;
+}
+
 // ── contacts (SENSIBLE) ──────────────────────────────────────────────────────
 
 /** Fila completa de la tabla base `contacts`. SENSIBLE: solo backend. */

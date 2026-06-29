@@ -5,7 +5,12 @@ import {
   serializerCompiler,
   validatorCompiler,
 } from "fastify-type-provider-zod";
-import type { ChannelLinkRepo, PersonRepo, SecureDeleteRepo } from "db";
+import type {
+  ChannelLinkRepo,
+  PersonRepo,
+  PersonStateAuditRepo,
+  SecureDeleteRepo,
+} from "db";
 import { errorHandler } from "../src/errors.js";
 import { registerMarkFoundSecureRoutes } from "../src/routes/mark-found-secure.js";
 import {
@@ -74,6 +79,15 @@ function makeFakePersonRepo(): PersonRepo {
   };
 }
 
+/** Fake auditoria: no-op (el foco de este test es el rate limit, no la auditoria). */
+function makeFakePersonStateAuditRepo(): PersonStateAuditRepo {
+  return {
+    async record() {
+      /* no-op */
+    },
+  };
+}
+
 let app: FastifyInstance;
 
 /**
@@ -94,6 +108,7 @@ async function buildWithRateLimit(): Promise<void> {
     channelLinkRepo: makeFakeChannelLinkRepo(),
     secureDeleteRepo: makeFakeSecureDeleteRepo(),
     personRepo: makeFakePersonRepo(),
+    personStateAuditRepo: makeFakePersonStateAuditRepo(),
   });
   await app.ready();
 }

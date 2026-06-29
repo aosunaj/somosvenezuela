@@ -106,6 +106,10 @@ export function registerDeleteSecureRoutes(
       }
 
       // Derecho al olvido: borra persona + contacto (cascada de canales).
+      // FOLLOW-UP (guardrail #8): retrofitear aqui el registro de auditoria del
+      // borrado (person_state_changes) queda pendiente. El borrado CASCADEA la
+      // auditoria de la persona (FK on delete cascade), por lo que registrarlo
+      // exigira un esquema/flujo aparte que sobreviva al borrado de la persona.
       await deps.secureDeleteRepo.deletePersonAndOwner(personId, personContactId);
       return reply.code(204).send();
     },
