@@ -246,8 +246,13 @@ export class HttpBackendClient implements BackendClient {
   ): Promise<readonly PublicPersonResult[]> {
     const body: Record<string, unknown> = {
       tipo: "persona",
-      target_nombre: query,
     };
+    // El nombre es OPCIONAL: la busqueda guiada permite omitirlo y buscar solo por
+    // zona o senas. Solo lo enviamos si trae texto (el backend valida min(1) y
+    // re-normaliza el score sobre los campos provistos).
+    if (query.trim().length > 0) {
+      body["target_nombre"] = query;
+    }
     if (zona !== undefined && zona.length > 0) {
       body["zona"] = zona;
     }
