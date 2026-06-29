@@ -11,6 +11,7 @@ export * from "./channel-link.js";
 export * from "./notification.js";
 export * from "./match.js";
 export * from "./secure-delete.js";
+export * from "./person-state-audit.js";
 export * from "./zone.js";
 export * from "./need.js";
 
@@ -36,6 +37,10 @@ import {
   createSecureDeleteRepo,
   type SecureDeleteRepo,
 } from "./secure-delete.js";
+import {
+  createPersonStateAuditRepo,
+  type PersonStateAuditRepo,
+} from "./person-state-audit.js";
 
 /** Conjunto de repositorios de la capa de datos. */
 export interface Repos {
@@ -60,6 +65,8 @@ export interface Repos {
   matches: MatchRepo;
   /** INTERNO: solo backend. Borrado seguro por el dueno (derecho al olvido). */
   secureDelete: SecureDeleteRepo;
+  /** INTERNO: solo backend. Auditoria de cambios de estado sensibles (guardrail #8). */
+  personStateAudit: PersonStateAuditRepo;
 }
 
 /**
@@ -80,5 +87,6 @@ export function createRepos(client: DbClient): Repos {
     notifications: createNotificationRepo(client),
     matches: createMatchRepo(client),
     secureDelete: createSecureDeleteRepo(client),
+    personStateAudit: createPersonStateAuditRepo(client),
   };
 }

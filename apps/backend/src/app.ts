@@ -6,6 +6,11 @@ import {
 } from "fastify-type-provider-zod";
 import type { AppDeps } from "./deps.js";
 import { errorHandler } from "./errors.js";
+import {
+  GLOBAL_RATE_LIMIT_MAX,
+  RATE_LIMIT_TIME_WINDOW,
+  rateLimitEnabledByDefault,
+} from "./rate-limit.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerPersonRoutes } from "./routes/persons.js";
 import { registerPetRoutes } from "./routes/pets.js";
@@ -28,8 +33,15 @@ import { registerSearchesRoutes } from "./routes/searches.js";
 /** Opciones de construccion de la app (ademas de las dependencias de negocio). */
 export interface BuildAppOptions {
   /**
+   * Activa el rate limiting (global + estricto por-ruta, guardrail #6). Si se
+   * omite, queda activo en cualquier entorno SALVO en tests (`NODE_ENV==='test'`),
+   * donde se desactiva para que los 76 tests existentes no reciban 429. El test
+   * enfocado de 429 lo activa de forma explicita con `rateLimitEnabled: true`.
+   */
+  rateLimitEnabled?: boolean;
+  /**
    * Maximo de peticiones por ventana para el rate limit global (anti-abuso,
-   * guardrail #7). Por defecto 100 por minuto.
+   * guardrail #6). Por defecto GLOBAL_RATE_LIMIT_MAX (100) por minuto.
    */
   rateLimitMax?: number;
   /** Ventana del rate limit. Por defecto "1 minute". */
@@ -57,12 +69,19 @@ export async function buildApp(
   // Mapeo uniforme de errores a HTTP (zod -> 400, guardrail -> 422, db -> 500).
   app.setErrorHandler(errorHandler);
 
-  // Rate limiting global anti-spam/anti-scraping (guardrail #7). Cubre escritura
-  // y busqueda. Devuelve 429 al superar el limite.
-  await app.register(rateLimit, {
-    max: options.rateLimitMax ?? 100,
-    timeWindow: options.rateLimitTimeWindow ?? "1 minute",
-  });
+  // Rate limiting anti-spam/anti-scraping (guardrail #6). Dos capas:
+  //   - GLOBAL por IP (este registro): freno general sobre toda la API.
+  //   - ESTRICTO por-ruta (config.rateLimit en las rutas sensibles por canal):
+  //     se aplica gracias a este mismo plugin; ver routes/{delete,mark-found}-secure.
+  // Devuelve 429 al superar el limite. Se desactiva en tests (ver rateLimitEnabled)
+  // para no romper los suites existentes, que ejercitan los endpoints en rafagas.
+  const rateLimitEnabled = options.rateLimitEnabled ?? rateLimitEnabledByDefault();
+  if (rateLimitEnabled) {
+    await app.register(rateLimit, {
+      max: options.rateLimitMax ?? GLOBAL_RATE_LIMIT_MAX,
+      timeWindow: options.rateLimitTimeWindow ?? RATE_LIMIT_TIME_WINDOW,
+    });
+  }
 
   // Rutas.
   registerHealthRoutes(app);
@@ -90,6 +109,7 @@ export async function buildApp(
     channelLinkRepo: deps.channelLinkRepo,
     secureDeleteRepo: deps.secureDeleteRepo,
     personRepo: deps.personRepo,
+    personStateAuditRepo: deps.personStateAuditRepo,
   });
   registerNotificationsRoutes(app, {
     notificationRepo: deps.notificationRepo,

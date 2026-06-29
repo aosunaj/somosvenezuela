@@ -5,6 +5,7 @@ import type {
   NeedRepo,
   NotificationRepo,
   PersonRepo,
+  PersonStateAuditRepo,
   PetRepo,
   PetSearchRepo,
   SearchRepo,
@@ -40,6 +41,8 @@ export interface AppDeps {
   matchRepo: MatchRepo;
   /** Borrado seguro por el dueno (derecho al olvido). */
   secureDeleteRepo: SecureDeleteRepo;
+  /** Auditoria de cambios de estado sensibles (guardrail #8): quien + cuando. */
+  personStateAuditRepo: PersonStateAuditRepo;
   /**
    * Secreto de servicio para operaciones privilegiadas (p. ej. DELETE).
    * Si esta vacio o indefinido, esas operaciones quedan deshabilitadas (responden 401).

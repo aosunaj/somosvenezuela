@@ -11,6 +11,8 @@ import type {
   MatchCreate,
   MatchRepo,
   PersonRepo,
+  PersonStateAuditRepo,
+  PersonStateChangeInput,
   PublicPersonResult,
   SearchRepo,
 } from "db";
@@ -74,6 +76,7 @@ export interface RepoCalls {
   markedFoundIds: string[];
   searchQueries: Array<{ query: string; zona?: string }>;
   matchCreated: MatchCreate[];
+  stateAudited: PersonStateChangeInput[];
 }
 
 export function makeRepoCalls(): RepoCalls {
@@ -84,6 +87,16 @@ export function makeRepoCalls(): RepoCalls {
     markedFoundIds: [],
     searchQueries: [],
     matchCreated: [],
+    stateAudited: [],
+  };
+}
+
+/** Fake PersonStateAuditRepo: captura las filas de auditoria de estado (guardrail #8). */
+export function makeFakePersonStateAuditRepo(calls: RepoCalls): PersonStateAuditRepo {
+  return {
+    async record(input) {
+      calls.stateAudited.push(input);
+    },
   };
 }
 

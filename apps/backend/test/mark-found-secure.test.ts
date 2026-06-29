@@ -4,7 +4,13 @@ import {
   serializerCompiler,
   validatorCompiler,
 } from "fastify-type-provider-zod";
-import type { ChannelLinkRepo, PersonRepo, SecureDeleteRepo } from "db";
+import type {
+  ChannelLinkRepo,
+  PersonRepo,
+  PersonStateAuditRepo,
+  PersonStateChangeInput,
+  SecureDeleteRepo,
+} from "db";
 import { errorHandler } from "../src/errors.js";
 import { registerMarkFoundSecureRoutes } from "../src/routes/mark-found-secure.js";
 
@@ -18,6 +24,7 @@ const PERSON_ID = "a0000000-0000-4000-8000-000000000001";
 
 interface Calls {
   markedFound: string[];
+  audited: PersonStateChangeInput[];
 }
 
 /**
@@ -75,11 +82,20 @@ function makeFakePersonRepo(calls: Calls): PersonRepo {
   };
 }
 
+/** Fake auditoria: captura las filas de cambio de estado para aserciones. */
+function makeFakePersonStateAuditRepo(calls: Calls): PersonStateAuditRepo {
+  return {
+    async record(input) {
+      calls.audited.push(input);
+    },
+  };
+}
+
 let app: FastifyInstance;
 let calls: Calls;
 
 async function buildWith(personContactId: string | null): Promise<void> {
-  calls = { markedFound: [] };
+  calls = { markedFound: [], audited: [] };
   app = Fastify({ logger: false });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -88,6 +104,7 @@ async function buildWith(personContactId: string | null): Promise<void> {
     channelLinkRepo: makeFakeChannelLinkRepo(),
     secureDeleteRepo: makeFakeSecureDeleteRepo(personContactId),
     personRepo: makeFakePersonRepo(calls),
+    personStateAuditRepo: makeFakePersonStateAuditRepo(calls),
   });
   await app.ready();
 }
@@ -110,6 +127,24 @@ describe("POST /persons/:id/found-by-channel — dueno correcto", () => {
 
     expect(res.statusCode).toBe(200);
     expect(calls.markedFound).toEqual([PERSON_ID]);
+  });
+
+  it("registra EXACTAMENTE una fila de auditoria con persona, autor y estado nuevo (guardrail #8)", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: `/persons/${PERSON_ID}/found-by-channel`,
+      payload: { plataforma: "telegram", chatId: "tg-owner" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    // Quien + cuando + estado nuevo: una sola fila de auditoria, con el contacto
+    // dueno del canal como autor del cambio.
+    expect(calls.audited).toHaveLength(1);
+    expect(calls.audited[0]).toMatchObject({
+      personId: PERSON_ID,
+      changedByContactId: OWNER_CONTACT_ID,
+      estadoNuevo: "encontrada_viva",
+    });
   });
 
   it("acepta la prueba de propiedad por cabeceras (sin body)", async () => {
@@ -136,6 +171,8 @@ describe("POST /persons/:id/found-by-channel — no autorizado", () => {
 
     expect(res.statusCode).toBe(403);
     expect(calls.markedFound).toHaveLength(0);
+    // Un cambio no autorizado NO deja rastro de auditoria.
+    expect(calls.audited).toHaveLength(0);
   });
 
   it("403 si el canal no existe (findContactByChannel null)", async () => {
