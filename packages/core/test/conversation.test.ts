@@ -190,6 +190,62 @@ describe("flujo registrar (completo hasta el efecto y la respuesta final)", () =
   });
 });
 
+// ── Confirmacion robusta: sinonimos naturales + cancelar ─────────────────────
+
+describe("confirmacion robusta (la gente tipea 'si'/'ok'/'no', no la etiqueta)", () => {
+  /** Lleva el registro hasta el paso 'confirm' con lo minimo (solo nombre). */
+  function untilConfirm(): StepResult {
+    return run(initialState, [
+      text(BUTTON.registrar),
+      text("Carmen"),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+    ]);
+  }
+
+  it.each(["si", "sí", "SÍ", "ok", "dale", "confirmo", BUTTON.confirmar])(
+    "confirma el registro con '%s' y emite create_person",
+    (palabra) => {
+      const confirmed = step(untilConfirm().state, text(palabra));
+      expect(confirmed.effect).toBeDefined();
+      const effect = confirmed.effect as Extract<Effect, { type: "create_person" }>;
+      expect(effect.type).toBe("create_person");
+      expect(effect.data.nombre).toBe("Carmen");
+    },
+  );
+
+  it.each(["Cancelar", "cancelar", "no"])(
+    "cancela el registro con '%s' y vuelve a idle sin emitir efecto",
+    (palabra) => {
+      const cancelled = step(untilConfirm().state, text(palabra));
+      expect(cancelled.state).toEqual({ flow: "idle" });
+      expect(cancelled.effect).toBeUndefined();
+    },
+  );
+
+  it("una respuesta ambigua re-muestra el resumen (no avanza ni cancela)", () => {
+    const ambiguous = step(untilConfirm().state, text("quiza mas tarde"));
+    expect(ambiguous.state.flow).toBe("register");
+    expect(
+      (ambiguous.state as Extract<ConversationState, { flow: "register" }>).step,
+    ).toBe("confirm");
+    expect(ambiguous.effect).toBeUndefined();
+    expect(joinReplies(ambiguous)).toContain("Confirmas");
+  });
+
+  it("cancela el borrado en la confirmacion (no emite delete_person)", () => {
+    const withId = run(initialState, [text(BUTTON.borrar), text(SYNTH_PERSON_ID)]);
+    expect((withId.state as Extract<ConversationState, { flow: "delete" }>).step).toBe(
+      "confirm",
+    );
+    const cancelled = step(withId.state, text("no"));
+    expect(cancelled.state).toEqual({ flow: "idle" });
+    expect(cancelled.effect).toBeUndefined();
+  });
+});
+
 // ── Validacion: re-pide sin avanzar ni crashear ──────────────────────────────
 
 describe("validacion de entrada (re-pide, no avanza, no crashea)", () => {

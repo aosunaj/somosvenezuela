@@ -35,8 +35,43 @@ const MENU_TEXT: Record<string, "register" | "search" | "search_pets" | "delete"
   [M.BUTTON.ayuda.toLowerCase()]: "help",
 };
 
-const SKIP_TOKEN = M.BUTTON.omitir.toLowerCase();
-const CONFIRM_TOKEN = M.BUTTON.confirmar.toLowerCase();
+/** Normaliza una entrada corta: minusculas, sin espacios extremos ni acentos. */
+function normalizeToken(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "");
+}
+
+// Sinonimos aceptados para confirmar / cancelar / omitir. La gente no escribe la
+// etiqueta EXACTA del boton: bajo estres tipea "si", "ok", "dale", "no". Aceptamos
+// lo natural para que el flujo no se trabe (CLAUDE.md: gente no tecnica, emergencia).
+const CONFIRM_TOKENS: ReadonlySet<string> = new Set([
+  normalizeToken(M.BUTTON.confirmar),
+  "confirmo",
+  "si",
+  "s",
+  "ok",
+  "okay",
+  "dale",
+  "vale",
+  "claro",
+  "correcto",
+  "yes",
+  "y",
+]);
+const CANCEL_TOKENS: ReadonlySet<string> = new Set([
+  normalizeToken(M.BUTTON.cancelar),
+  "cancel",
+  "no",
+]);
+const SKIP_TOKENS: ReadonlySet<string> = new Set([
+  normalizeToken(M.BUTTON.omitir),
+  "saltar",
+  "skip",
+  "-",
+]);
 
 // ── Helpers de construccion de salida ────────────────────────────────────────
 
@@ -273,6 +308,10 @@ function registerSetDescripcion(state: RegisterState, text: string): StepResult 
 
 /** En confirm: Confirmar => emite el efecto create_person; otro => re-pide resumen. */
 function registerConfirm(state: RegisterState, text: string): StepResult {
+  if (isCancel(text)) {
+    // Cancelar desde la confirmacion: descartamos el borrador y volvemos al menu.
+    return toMenu(M.CANCELLED);
+  }
   if (!isConfirm(text)) {
     return result(state, [reply(M.registerSummary(requireNombre(state.draft)), M.confirmButtons())]);
   }
@@ -412,6 +451,10 @@ function stepDelete(state: DeleteState, input: FlowInput): StepResult {
       );
     }
     case "confirm": {
+      if (isCancel(input.text)) {
+        // Cancelar desde la confirmacion de borrado: volvemos al menu sin borrar.
+        return toMenu(M.CANCELLED);
+      }
       if (!isConfirm(input.text)) {
         // Cualquier respuesta que no sea confirmar re-pide la confirmacion.
         const pid = state.personId ?? "";
@@ -434,9 +477,13 @@ function stepDelete(state: DeleteState, input: FlowInput): StepResult {
 // ── Tokens de entrada ────────────────────────────────────────────────────────
 
 function isSkip(text: string): boolean {
-  return text.trim().toLowerCase() === SKIP_TOKEN;
+  return SKIP_TOKENS.has(normalizeToken(text));
 }
 
 function isConfirm(text: string): boolean {
-  return text.trim().toLowerCase() === CONFIRM_TOKEN;
+  return CONFIRM_TOKENS.has(normalizeToken(text));
+}
+
+function isCancel(text: string): boolean {
+  return CANCEL_TOKENS.has(normalizeToken(text));
 }
