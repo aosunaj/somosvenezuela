@@ -34,7 +34,16 @@ export interface Reply {
 export type Effect =
   | { readonly type: "create_person"; readonly data: PersonCreate }
   | { readonly type: "create_pet"; readonly data: PetCreate }
-  | { readonly type: "search_persons"; readonly query: string; readonly zona?: string }
+  // Busqueda GUIADA de personas: `query` es el nombre buscado (nombre + apellidos
+  // juntos, como lo puntua el matcher token a token). `zona` y `descripcion` son los
+  // campos estructurados opcionales que el matcher YA pondera (mejor score que un
+  // unico texto libre). NO transporta contacto (guardrail #1).
+  | {
+      readonly type: "search_persons";
+      readonly query: string;
+      readonly zona?: string;
+      readonly descripcion?: string;
+    }
   | { readonly type: "search_pets"; readonly query: string; readonly zona?: string }
   | { readonly type: "delete_person"; readonly personId: string }
   // Reporte del DUENO: marca su registro como encontrado con vida. El backend lo
@@ -172,6 +181,20 @@ export interface RegisterDraft {
 }
 
 /**
+ * Datos recogidos paso a paso durante la BUSQUEDA guiada de una persona. TODOS
+ * opcionales y SALTEABLES (espeja el flujo de registrar): quien busca puede no saber
+ * todos los datos. Al menos uno debe quedar relleno para poder buscar (no se busca con
+ * vacio). La `edad` se recoge para el futuro; el matcher de hoy no la pondera.
+ */
+export interface SearchDraft {
+  readonly nombre?: string | null;
+  readonly apellidos?: string | null;
+  readonly edad?: number | null;
+  readonly zona?: string | null;
+  readonly descripcion?: string | null;
+}
+
+/**
  * Datos recogidos paso a paso durante el registro de una mascota. TODOS opcionales
  * (espeja `petCreateSchema`): una mascota puede no tener nombre/raza conocidos.
  */
@@ -210,8 +233,20 @@ export type ConversationState =
     }
   | {
       readonly flow: "search";
-      readonly step: "query" | "searching" | "choosing" | "requesting";
-      readonly query?: string;
+      // Pasos GUIADOS (nombre -> apellidos -> edad -> zona -> descripcion), cada uno
+      // salteable, espejando el registro. Tras recolectar se dispara la busqueda
+      // ('searching') y, con resultados, se ofrece conectar ('choosing'/'requesting').
+      readonly step:
+        | "nombre"
+        | "apellidos"
+        | "edad"
+        | "zona"
+        | "descripcion"
+        | "searching"
+        | "choosing"
+        | "requesting";
+      // Datos acumulados durante la recoleccion guiada (presente en los pasos guiados).
+      readonly draft?: SearchDraft;
       // En 'choosing'/'requesting': ids PUBLICOS de las personas mostradas, en el orden
       // en que se listaron. El buscador elige por su numero; el id NO es PII (guardrail #1).
       readonly candidates?: readonly string[];

@@ -200,13 +200,41 @@ export function petSummary(draft: {
   );
 }
 
-// ── Busqueda ─────────────────────────────────────────────────────────────────
+// ── Busqueda guiada de persona ───────────────────────────────────────────────
+//
+// Espeja el flujo de REGISTRAR: pregunta paso a paso (nombre -> apellidos -> edad
+// -> zona -> senas), cada paso SALTEABLE con Omitir. Mas campos estructurados = mejor
+// parecido (el matcher pondera nombre, zona y descripcion). Tono calido y claro.
 
-export const SEARCH_ASK_QUERY =
-  "¿A quien buscas? Escribe un nombre, una zona o una descripcion.";
+export const SEARCH_ASK_NOMBRE =
+  "Vamos a buscar a una persona. ¿Cual es su nombre? Si no lo sabes, pulsa Omitir.";
 
-export const SEARCH_INVALID_QUERY =
-  "Necesito algun dato para buscar. Escribe un nombre, una zona o una descripcion.";
+export const SEARCH_ASK_APELLIDOS =
+  "¿Cuales son sus apellidos? Si no los sabes, pulsa Omitir.";
+
+export const SEARCH_ASK_EDAD =
+  "¿Que edad tiene, aproximadamente? Escribe un numero, o pulsa Omitir si no la conoces.";
+
+export const SEARCH_INVALID_EDAD =
+  "Esa edad no es valida. Escribe un numero entre 0 y 129, o pulsa Omitir.";
+
+export const SEARCH_ASK_ZONA =
+  "¿En que zona se le vio por ultima vez? Si no lo sabes, pulsa Omitir.";
+
+export const SEARCH_ASK_DESCRIPCION =
+  "Cuentanos senas que ayuden a reconocerla (ropa, estatura, contexto). " +
+  "Si no tienes datos, pulsa Omitir.";
+
+export const SEARCH_INVALID_TEXTO =
+  "Ese dato quedo vacio. Escribe algo, o pulsa Omitir para dejarlo en blanco.";
+
+/**
+ * Aviso cuando la busqueda quedo SIN ningun dato (todo omitido): no buscamos con
+ * vacio. Re-pedimos amablemente al menos un dato para poder buscar.
+ */
+export const SEARCH_EMPTY =
+  "Necesitamos al menos un dato para poder buscar. " +
+  "Cuentanos su nombre, apellidos, zona o alguna sena.";
 
 export const SEARCH_NO_RESULTS =
   "No encontramos coincidencias por ahora. El registro sigue creciendo: vuelve a intentarlo mas tarde.";

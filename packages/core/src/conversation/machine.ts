@@ -10,6 +10,7 @@ import {
   type PetDraft,
   type RegisterDraft,
   type Reply,
+  type SearchDraft,
   type StepResult,
 } from "./state.js";
 
@@ -178,7 +179,11 @@ function startFlow(choice: FlowChoice): StepResult {
         [reply(M.REGISTER_PET_ASK_NOMBRE, M.skipButtons())],
       );
     case "search":
-      return result({ flow: "search", step: "query" }, [reply(M.SEARCH_ASK_QUERY)]);
+      // Busqueda GUIADA: arranca pidiendo el nombre (salteable), igual que registrar.
+      return result(
+        { flow: "search", step: "nombre", draft: {} },
+        [reply(M.SEARCH_ASK_NOMBRE, M.skipButtons())],
+      );
     case "search_pets":
       return result(
         { flow: "search_pets", step: "query" },
@@ -564,7 +569,7 @@ function advanceRegisterPet(
   return result({ flow: "register_pet", step: nextStep, draft }, [reply(prompt, M.skipButtons())]);
 }
 
-// ── Flujo: buscar ────────────────────────────────────────────────────────────
+// ── Flujo: buscar (GUIADO, espeja registrar) ──────────────────────────────────
 
 type SearchState = Extract<ConversationState, { flow: "search" }>;
 
@@ -595,8 +600,11 @@ function stepSearch(state: SearchState, input: FlowInput): StepResult {
             : M.REUNION_REQUEST_FAILED;
       return result(initialState, [reply(message), reply(M.WELCOME, M.menuButtons())]);
     }
-    // Resultado inesperado para el paso actual: reofrecemos la pregunta de busqueda.
-    return result({ flow: "search", step: "query" }, [reply(M.SEARCH_ASK_QUERY)]);
+    // Resultado inesperado para el paso actual: reofrecemos la busqueda desde el inicio.
+    return result(
+      { flow: "search", step: "nombre", draft: {} },
+      [reply(M.SEARCH_ASK_NOMBRE, M.skipButtons())],
+    );
   }
 
   // input.kind === 'text'
@@ -623,18 +631,143 @@ function stepSearch(state: SearchState, input: FlowInput): StepResult {
     );
   }
 
-  // state.step === 'query'
-  const query = input.text.trim();
-  if (query.length === 0) {
-    return result({ flow: "search", step: "query" }, [reply(M.SEARCH_INVALID_QUERY)]);
+  // Pasos GUIADOS de recoleccion: cada uno salteable (espeja el registro de persona).
+  const draft = state.draft ?? {};
+  const text = input.text;
+  switch (state.step) {
+    case "nombre":
+      return searchSetOptionalTexto(draft, text, "nombre", "apellidos", M.SEARCH_ASK_APELLIDOS);
+    case "apellidos":
+      return searchSetOptionalTexto(draft, text, "apellidos", "edad", M.SEARCH_ASK_EDAD);
+    case "edad":
+      return searchSetEdad(draft, text);
+    case "zona":
+      return searchSetOptionalTexto(draft, text, "zona", "descripcion", M.SEARCH_ASK_DESCRIPCION);
+    case "descripcion":
+      return searchSetDescripcion(draft, text);
   }
-  // Emite el efecto; el adaptador buscara y re-inyectara los resultados.
-  // No incluimos contacto: la busqueda usa la vista publica (guardrail #1).
+}
+
+/**
+ * Paso de texto opcional (nombre/apellidos/zona): Omitir => null; texto no vacio => se
+ * valida con el schema de persona; vacio sin omitir => re-pide el mismo paso. Avanza al
+ * siguiente paso guiado de la busqueda.
+ */
+function searchSetOptionalTexto(
+  draft: SearchDraft,
+  text: string,
+  field: "nombre" | "apellidos" | "zona",
+  nextStep: "apellidos" | "edad" | "descripcion",
+  nextPrompt: string,
+): StepResult {
+  if (isSkip(text)) {
+    return advanceSearch({ ...draft, [field]: null }, nextStep, nextPrompt);
+  }
+  // Reusamos los schemas de persona: nombre/apellidos/zona comparten validacion de texto.
+  const shape =
+    field === "nombre" ? personCreateSchema.shape.nombre : personCreateSchema.shape[field];
+  const parsed = shape.safeParse(text);
+  if (!parsed.success || parsed.data == null) {
+    return result(
+      { flow: "search", step: field, draft },
+      [reply(M.SEARCH_INVALID_TEXTO, M.skipButtons())],
+    );
+  }
+  return advanceSearch({ ...draft, [field]: parsed.data }, nextStep, nextPrompt);
+}
+
+/** Edad opcional de la busqueda: vacio/Omitir => null; numero invalido => re-pide. */
+function searchSetEdad(draft: SearchDraft, text: string): StepResult {
+  if (isSkip(text)) {
+    return advanceSearch({ ...draft, edad: null }, "zona", M.SEARCH_ASK_ZONA);
+  }
+  const n = Number(text.trim());
+  // Number("") es 0; exigimos que el texto sea realmente numerico.
+  const looksNumeric = text.trim() !== "" && Number.isFinite(n);
+  const parsed = looksNumeric ? edadSchema.safeParse(n) : { success: false as const };
+  if (!parsed.success) {
+    return result(
+      { flow: "search", step: "edad", draft },
+      [reply(M.SEARCH_INVALID_EDAD, M.skipButtons())],
+    );
+  }
+  return advanceSearch({ ...draft, edad: parsed.data }, "zona", M.SEARCH_ASK_ZONA);
+}
+
+/**
+ * Ultimo paso guiado (senas/descripcion): Omitir => null; texto no vacio => se valida.
+ * Tras el, si hay AL MENOS UN dato se dispara la busqueda; si todo quedo vacio, no se
+ * busca con vacio: se pide amablemente al menos un dato y se reinicia la recoleccion.
+ */
+function searchSetDescripcion(draft: SearchDraft, text: string): StepResult {
+  let value: string | null;
+  if (isSkip(text)) {
+    value = null;
+  } else {
+    const parsed = personCreateSchema.shape.descripcion.safeParse(text);
+    if (!parsed.success || parsed.data == null) {
+      return result(
+        { flow: "search", step: "descripcion", draft },
+        [reply(M.SEARCH_INVALID_TEXTO, M.skipButtons())],
+      );
+    }
+    value = parsed.data;
+  }
+  const full: SearchDraft = { ...draft, descripcion: value };
+  if (searchDraftIsEmpty(full)) {
+    // Sin ningun dato no se puede buscar: re-pedimos desde el nombre (al menos un dato).
+    return result(
+      { flow: "search", step: "nombre", draft: {} },
+      [reply(M.SEARCH_EMPTY), reply(M.SEARCH_ASK_NOMBRE, M.skipButtons())],
+    );
+  }
+  // Emite el efecto con los campos estructurados que el matcher pondera. El adaptador
+  // buscara y re-inyectara los resultados. Sin contacto: vista publica (guardrail #1).
   return result(
-    { flow: "search", step: "searching", query },
+    { flow: "search", step: "searching", draft: full },
     [],
-    { type: "search_persons", query },
+    buildSearchEffect(full),
   );
+}
+
+/** Una busqueda sin nombre, apellidos, edad, zona ni senas no sirve para buscar. */
+function searchDraftIsEmpty(draft: SearchDraft): boolean {
+  const fields = [draft.nombre, draft.apellidos, draft.edad, draft.zona, draft.descripcion];
+  return fields.every((v) => v == null || v === "");
+}
+
+/**
+ * Construye el efecto `search_persons` a partir del draft. Mapea al scoring del matcher:
+ *   - `query` = nombre + apellidos juntos (el matcher puntua el nombre token a token).
+ *   - `zona`  = filtro/score de zona (campo ponderado del matcher).
+ *   - `descripcion` (senas) = campo de texto libre ponderado del matcher.
+ * La edad se recoge pero el matcher de hoy no la usa; no se envia (no rompe nada).
+ */
+function buildSearchEffect(draft: SearchDraft): Effect {
+  const query = [draft.nombre, draft.apellidos]
+    .filter((v): v is string => typeof v === "string" && v.length > 0)
+    .join(" ")
+    .trim();
+  const effect: {
+    type: "search_persons";
+    query: string;
+    zona?: string;
+    descripcion?: string;
+  } = { type: "search_persons", query };
+  if (draft.zona != null && draft.zona !== "") effect.zona = draft.zona;
+  if (draft.descripcion != null && draft.descripcion !== "") {
+    effect.descripcion = draft.descripcion;
+  }
+  return effect;
+}
+
+/** Avanza la busqueda guiada al siguiente paso con su draft y prompt (con Omitir). */
+function advanceSearch(
+  draft: SearchDraft,
+  nextStep: "apellidos" | "edad" | "zona" | "descripcion",
+  prompt: string,
+): StepResult {
+  return result({ flow: "search", step: nextStep, draft }, [reply(prompt, M.skipButtons())]);
 }
 
 /**
