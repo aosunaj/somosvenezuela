@@ -146,3 +146,37 @@ export const searchSchema = z.object({
   created_at: z.iso.datetime({ offset: true }),
 });
 export type Search = z.infer<typeof searchSchema>;
+
+// ── Mapa: zonas y necesidades (vistas publicas) ──────────────────────────────
+//
+// Zonas (puntos de encuentro) y necesidades son LECTURA PUBLICA del mapa de la
+// emergencia: no llevan contacto ni identidad interna (guardrail #1). Definimos su
+// vista publica aqui (en core) para que la maquina de conversacion la muestre y los
+// adaptadores la validen con zod, sin acoplarse al paquete `db`. Espejan las vistas
+// `zones_public` / `needs_public` y las rutas GET /zones y GET /needs del backend.
+
+/** Urgencia de una necesidad. Espeja la constraint SQL `urgencia in (...)`. */
+export const urgenciaSchema = z.enum(["baja", "media", "alta", "critica"]);
+export type Urgencia = z.infer<typeof urgenciaSchema>;
+
+/** Vista publica de una zona (punto de encuentro). Espeja `zones_public`. */
+export const publicZoneSchema = z.object({
+  id: idSchema,
+  nombre: z.string(),
+  lat: z.number().nullable(),
+  lng: z.number().nullable(),
+  estado: z.string().nullable(),
+  updated_at: z.iso.datetime({ offset: true }),
+});
+export type PublicZone = z.infer<typeof publicZoneSchema>;
+
+/** Vista publica de una necesidad por zona. Espeja `needs_public`. */
+export const publicNeedSchema = z.object({
+  id: idSchema,
+  zone_id: idSchema,
+  tipo: z.string(),
+  urgencia: urgenciaSchema,
+  descripcion: z.string().nullable(),
+  updated_at: z.iso.datetime({ offset: true }),
+});
+export type PublicNeed = z.infer<typeof publicNeedSchema>;

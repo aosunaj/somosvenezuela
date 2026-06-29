@@ -26,17 +26,28 @@ const CMD_HELP = "/ayuda";
 const CMD_CANCEL = "/cancelar";
 const CMD_PET = "/mascota";
 const CMD_REGISTER_PET = "/registrarmascota";
+const CMD_ZONES = "/zonas";
+const CMD_NEEDS = "/necesidades";
 
 // Etiquetas de menu que, como texto, equivalen a elegir una opcion. Permite que
 // el adaptador mande el texto del boton sin tener que mapearlo a un comando.
 const MENU_TEXT: Record<
   string,
-  "register" | "register_pet" | "search" | "search_pets" | "delete" | "help"
+  | "register"
+  | "register_pet"
+  | "search"
+  | "search_pets"
+  | "browse_zones"
+  | "browse_needs"
+  | "delete"
+  | "help"
 > = {
   [M.BUTTON.registrar.toLowerCase()]: "register",
   [M.BUTTON.registrarMascota.toLowerCase()]: "register_pet",
   [M.BUTTON.buscar.toLowerCase()]: "search",
   [M.BUTTON.buscarMascota.toLowerCase()]: "search_pets",
+  [M.BUTTON.zonas.toLowerCase()]: "browse_zones",
+  [M.BUTTON.necesidades.toLowerCase()]: "browse_needs",
   [M.BUTTON.borrar.toLowerCase()]: "delete",
   [M.BUTTON.ayuda.toLowerCase()]: "help",
 };
@@ -115,6 +126,12 @@ function handleGlobalCommand(command: string): StepResult | null {
     case CMD_REGISTER_PET:
       // Atajo explicito para entrar directo al registro de mascotas.
       return startFlow("register_pet");
+    case CMD_ZONES:
+      // Atajo explicito para ver los puntos de encuentro (mapa, solo lectura).
+      return startFlow("browse_zones");
+    case CMD_NEEDS:
+      // Atajo explicito para ver las necesidades por zona (mapa, solo lectura).
+      return startFlow("browse_needs");
     default:
       return null;
   }
@@ -132,6 +149,8 @@ type FlowChoice =
   | "register_pet"
   | "search"
   | "search_pets"
+  | "browse_zones"
+  | "browse_needs"
   | "delete"
   | "help";
 
@@ -154,6 +173,13 @@ function startFlow(choice: FlowChoice): StepResult {
         { flow: "search_pets", step: "query" },
         [reply(M.SEARCH_PET_ASK_QUERY)],
       );
+    case "browse_zones":
+      // Vista de solo lectura: sin paso de query. Emite el effect de inmediato y
+      // queda en loading hasta que el adaptador re-inyecte la lista de zonas.
+      return result({ flow: "browse_zones", step: "loading" }, [], { type: "list_zones" });
+    case "browse_needs":
+      // Igual que zonas: sin query, emite el effect y espera la lista de necesidades.
+      return result({ flow: "browse_needs", step: "loading" }, [], { type: "list_needs" });
     case "delete":
       return result({ flow: "delete", step: "id" }, [reply(M.DELETE_ASK_ID)]);
     case "help":
@@ -189,6 +215,10 @@ export function step(state: ConversationState, input: ConversationInput): StepRe
       return stepSearch(state, input);
     case "search_pets":
       return stepSearchPets(state, input);
+    case "browse_zones":
+      return stepBrowseZones(state, input);
+    case "browse_needs":
+      return stepBrowseNeeds(state, input);
     case "delete":
       return stepDelete(state, input);
   }
@@ -583,6 +613,50 @@ function stepSearchPets(state: SearchPetsState, input: FlowInput): StepResult {
     [],
     { type: "search_pets", query },
   );
+}
+
+// ── Flujo: ver puntos de encuentro (zonas) ───────────────────────────────────
+
+type BrowseZonesState = Extract<ConversationState, { flow: "browse_zones" }>;
+
+/**
+ * Vista de SOLO LECTURA. Al entrar ya se emitio `list_zones`; aqui solo esperamos
+ * el `effect_result` con la lista. Cuando llega, la mostramos (o el mensaje vacio) y
+ * volvemos a idle con el menu. Texto recibido en loading se ignora (espeja stepSearch).
+ */
+function stepBrowseZones(state: BrowseZonesState, input: FlowInput): StepResult {
+  if (input.kind === "effect_result") {
+    if (input.result.type !== "list_zones") {
+      // Resultado inesperado: volvemos a idle ofreciendo el menu.
+      return toMenu(M.WELCOME);
+    }
+    const { zones } = input.result;
+    const text = zones.length === 0 ? M.ZONES_EMPTY : M.zonesList(zones);
+    return result(initialState, [reply(text), reply(M.WELCOME, M.menuButtons())]);
+  }
+  // Texto mientras carga: lo ignoramos sin emitir respuesta.
+  return result(state, []);
+}
+
+// ── Flujo: ver necesidades por zona ──────────────────────────────────────────
+
+type BrowseNeedsState = Extract<ConversationState, { flow: "browse_needs" }>;
+
+/**
+ * Vista de SOLO LECTURA. Espejo de `stepBrowseZones`: espera el `effect_result` con
+ * las necesidades, las muestra (ordenadas por urgencia) o el mensaje vacio, y vuelve
+ * a idle con el menu. Texto recibido en loading se ignora.
+ */
+function stepBrowseNeeds(state: BrowseNeedsState, input: FlowInput): StepResult {
+  if (input.kind === "effect_result") {
+    if (input.result.type !== "list_needs") {
+      return toMenu(M.WELCOME);
+    }
+    const { needs } = input.result;
+    const text = needs.length === 0 ? M.NEEDS_EMPTY : M.needsList(needs);
+    return result(initialState, [reply(text), reply(M.WELCOME, M.menuButtons())]);
+  }
+  return result(state, []);
 }
 
 // ── Flujo: borrar ────────────────────────────────────────────────────────────

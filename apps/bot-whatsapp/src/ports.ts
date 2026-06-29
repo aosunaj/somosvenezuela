@@ -1,4 +1,10 @@
-import type { ConversationState, PublicPerson, PublicPet } from "core";
+import type {
+  ConversationState,
+  PublicNeed,
+  PublicPerson,
+  PublicPet,
+  PublicZone,
+} from "core";
 
 // Puertos (interfaces inyectables) del adaptador de WhatsApp.
 //
@@ -79,6 +85,8 @@ export class NotOwnerError extends Error {
  * - `deleteByChannel` borra un registro solo si el canal que lo pide es su dueno
  *   (DELETE /persons/:id/by-channel); el backend autoriza, el adaptador no decide.
  * - `searchPersons`/`searchPets` devuelven la vista publica (sin contacto) con score.
+ * - `listZones`/`listNeeds` son LECTURA PUBLICA del mapa (GET): puntos de encuentro y
+ *   necesidades por zona. Sin contacto ni PII; el bot solo las muestra (paridad web).
  * - `createPerson` se conserva por compatibilidad con tests del slice anterior; el
  *   flujo real de registro usa `registerPerson`.
  */
@@ -102,6 +110,8 @@ export interface BackendClient {
     query: string,
     zona?: string,
   ): Promise<readonly PublicPetResult[]>;
+  listZones(): Promise<readonly PublicZone[]>;
+  listNeeds(): Promise<readonly PublicNeed[]>;
 }
 
 // ── Almacen de sesiones ──────────────────────────────────────────────────────

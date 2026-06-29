@@ -1,4 +1,4 @@
-import type { PublicPerson, PublicPet } from "../schemas.js";
+import type { PublicNeed, PublicPerson, PublicPet, PublicZone } from "../schemas.js";
 
 // Textos de cara al usuario, en espanol neutral (sin voseo) y claros para gente
 // no tecnica. Lema interno: "Nadie se queda atras." (CLAUDE.md, guardrails).
@@ -13,6 +13,8 @@ export const BUTTON = {
   buscar: "Buscar persona",
   registrarMascota: "Registrar mascota",
   buscarMascota: "Buscar mascota",
+  zonas: "Puntos de encuentro",
+  necesidades: "Necesidades",
   borrar: "Borrar mi registro",
   ayuda: "Ayuda",
   confirmar: "Confirmar",
@@ -25,6 +27,7 @@ export function menuButtons(): string[][] {
   return [
     [BUTTON.registrar, BUTTON.buscar],
     [BUTTON.registrarMascota, BUTTON.buscarMascota],
+    [BUTTON.zonas, BUTTON.necesidades],
     [BUTTON.borrar],
     [BUTTON.ayuda],
   ];
@@ -52,6 +55,8 @@ export const HELP =
   "- Registrar a una persona desaparecida.\n" +
   "- Buscar entre los registros existentes.\n" +
   "- Buscar una mascota perdida.\n" +
+  "- Ver los puntos de encuentro y las zonas.\n" +
+  "- Ver las necesidades de cada zona.\n" +
   "- Borrar un registro que hayas creado.\n\n" +
   "En cualquier momento puedes escribir /cancelar para volver al inicio.";
 
@@ -266,6 +271,60 @@ export function searchPetResults(
       `${i + 1}. ${nombre}${tipo}${raza}${zona}\n` +
       `   Estado: ${r.estado} · Fuente: ${r.fuente} · Verificacion: ${r.verificacion}${score}`
     );
+  });
+  return [header, ...lines].join("\n");
+}
+
+// ── Mapa: zonas (puntos de encuentro) ────────────────────────────────────────
+
+export const ZONES_EMPTY =
+  "Todavia no hay puntos de encuentro publicados. En cuanto se agreguen, los veras aqui. " +
+  "Gracias por estar pendiente.";
+
+/**
+ * Formatea el listado de zonas (puntos de encuentro) del mapa para mostrarlo en el
+ * chat. Vista publica `PublicZone`: nombre y estado. NUNCA incluye dato de contacto
+ * ni la identidad de quien actualizo la zona (guardrail #1).
+ */
+export function zonesList(zones: readonly PublicZone[]): string {
+  const header = `Puntos de encuentro (${zones.length} ${
+    zones.length === 1 ? "zona" : "zonas"
+  }):`;
+  const lines = zones.map(
+    (z) => `• ${z.nombre} — estado: ${z.estado == null || z.estado === "" ? "sin dato" : z.estado}`,
+  );
+  return [header, ...lines].join("\n");
+}
+
+// ── Mapa: necesidades por zona ───────────────────────────────────────────────
+
+export const NEEDS_EMPTY =
+  "Por ahora no hay necesidades publicadas. En cuanto se registren, las veras aqui. " +
+  "Gracias por querer ayudar.";
+
+/** Orden de prioridad para mostrar las necesidades: lo mas urgente primero. */
+const URGENCIA_ORDEN: Record<PublicNeed["urgencia"], number> = {
+  critica: 0,
+  alta: 1,
+  media: 2,
+  baja: 3,
+};
+
+/**
+ * Formatea el listado de necesidades por zona. Las ORDENA por urgencia (critica
+ * primero) para que lo mas grave salte a la vista. Vista publica `PublicNeed`: tipo,
+ * urgencia, descripcion y la referencia de zona. Sin dato de contacto (guardrail #1).
+ */
+export function needsList(needs: readonly PublicNeed[]): string {
+  const header = `Necesidades (${needs.length} ${
+    needs.length === 1 ? "registro" : "registros"
+  }):`;
+  const ordered = [...needs].sort(
+    (a, b) => URGENCIA_ORDEN[a.urgencia] - URGENCIA_ORDEN[b.urgencia],
+  );
+  const lines = ordered.map((n) => {
+    const descripcion = n.descripcion == null || n.descripcion === "" ? "(sin detalle)" : n.descripcion;
+    return `• [${n.urgencia}] ${n.tipo}: ${descripcion} (zona: ${n.zone_id})`;
   });
   return [header, ...lines].join("\n");
 }

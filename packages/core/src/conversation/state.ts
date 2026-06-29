@@ -1,5 +1,5 @@
 import type { PersonCreate, PetCreate } from "../schemas.js";
-import type { PublicPerson, PublicPet } from "../schemas.js";
+import type { PublicNeed, PublicPerson, PublicPet, PublicZone } from "../schemas.js";
 
 // Tipos PUROS de la maquina de conversacion compartida (CLAUDE.md, 02-design.md).
 // La maquina es el "cerebro" que reutilizan Telegram y WhatsApp; los adaptadores
@@ -36,7 +36,11 @@ export type Effect =
   | { readonly type: "create_pet"; readonly data: PetCreate }
   | { readonly type: "search_persons"; readonly query: string; readonly zona?: string }
   | { readonly type: "search_pets"; readonly query: string; readonly zona?: string }
-  | { readonly type: "delete_person"; readonly personId: string };
+  | { readonly type: "delete_person"; readonly personId: string }
+  // Vistas de SOLO LECTURA del mapa: no llevan query ni dato alguno; el adaptador
+  // hace un GET publico al backend (paridad bot<->web). Sin contacto ni PII.
+  | { readonly type: "list_zones" }
+  | { readonly type: "list_needs" };
 
 // ── Effect result (re-inyectado por el adaptador) ────────────────────────────
 
@@ -80,13 +84,33 @@ export type DeletePersonResult =
   | { readonly type: "delete_person"; readonly ok: true }
   | { readonly type: "delete_person"; readonly ok: false };
 
+/**
+ * Resultado de `list_zones`: las zonas publicas (puntos de encuentro) del mapa.
+ * Vista publica `PublicZone` (sin contacto ni identidad interna, guardrail #1).
+ */
+export type ListZonesResult = {
+  readonly type: "list_zones";
+  readonly zones: readonly PublicZone[];
+};
+
+/**
+ * Resultado de `list_needs`: las necesidades publicas por zona del mapa.
+ * Vista publica `PublicNeed` (sin contacto ni identidad interna, guardrail #1).
+ */
+export type ListNeedsResult = {
+  readonly type: "list_needs";
+  readonly needs: readonly PublicNeed[];
+};
+
 /** Union de todos los resultados que el adaptador puede re-inyectar. */
 export type EffectResult =
   | CreatePersonResult
   | CreatePetResult
   | SearchPersonsResult
   | SearchPetsResult
-  | DeletePersonResult;
+  | DeletePersonResult
+  | ListZonesResult
+  | ListNeedsResult;
 
 // ── Input ────────────────────────────────────────────────────────────────────
 
@@ -163,7 +187,11 @@ export type ConversationState =
       readonly flow: "delete";
       readonly step: "id" | "confirm" | "deleting";
       readonly personId?: string;
-    };
+    }
+  // Vistas de SOLO LECTURA del mapa: al entrar se emite el effect y se queda en
+  // `loading` esperando el `effect_result` con la lista; luego vuelve a idle.
+  | { readonly flow: "browse_zones"; readonly step: "loading" }
+  | { readonly flow: "browse_needs"; readonly step: "loading" };
 
 /** Estado inicial: menu/idle. */
 export const initialState: ConversationState = { flow: "idle" };

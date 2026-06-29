@@ -1,5 +1,6 @@
-import { publicPersonSchema, publicPetSchema } from "core";
+import { publicNeedSchema, publicPersonSchema, publicPetSchema, publicZoneSchema } from "core";
 import { z } from "zod";
+import type { PublicNeed, PublicZone } from "core";
 import {
   NotOwnerError,
   type BackendClient,
@@ -16,6 +17,8 @@ import {
 //   DELETE `${BACKEND_URL}/persons/:id/by-channel`  -> borra si el canal es dueno.
 //   POST   `${BACKEND_URL}/searches`                -> busca persona, vincula al buscador.
 //   GET    `${BACKEND_URL}/search/pets`             -> busca mascotas (vista publica).
+//   GET    `${BACKEND_URL}/zones`                   -> lista zonas publicas (mapa).
+//   GET    `${BACKEND_URL}/needs`                   -> lista necesidades publicas (mapa).
 //
 // Tipamos/validamos las respuestas con los schemas de `core` para no confiar
 // ciegamente en el backend. JAMAS pedimos ni leemos contact_id: el contrato del
@@ -43,6 +46,16 @@ const searchPetsResponseSchema = z.object({
   results: z.array(
     publicPetSchema.extend({ score: z.number().optional() }),
   ),
+});
+
+/** Respuesta de GET /zones: listado publico de zonas (mapa). */
+const zonesResponseSchema = z.object({
+  zones: z.array(publicZoneSchema),
+});
+
+/** Respuesta de GET /needs: listado publico de necesidades por zona (mapa). */
+const needsResponseSchema = z.object({
+  needs: z.array(publicNeedSchema),
 });
 
 export class HttpBackendClient implements BackendClient {
@@ -198,5 +211,28 @@ export class HttpBackendClient implements BackendClient {
     return parsed.results.map(({ score, ...mascota }) =>
       score === undefined ? mascota : { ...mascota, score },
     );
+  }
+
+  async listZones(): Promise<readonly PublicZone[]> {
+    const res = await fetch(`${this.#baseUrl}/zones`, { method: "GET" });
+    if (!res.ok) {
+      throw new Error(`GET /zones fallo con estado ${res.status}`);
+    }
+
+    const json: unknown = await res.json();
+    // Validamos la vista publica (sin contacto ni identidad interna) antes de usarla.
+    const parsed = zonesResponseSchema.parse(json);
+    return parsed.zones;
+  }
+
+  async listNeeds(): Promise<readonly PublicNeed[]> {
+    const res = await fetch(`${this.#baseUrl}/needs`, { method: "GET" });
+    if (!res.ok) {
+      throw new Error(`GET /needs fallo con estado ${res.status}`);
+    }
+
+    const json: unknown = await res.json();
+    const parsed = needsResponseSchema.parse(json);
+    return parsed.needs;
   }
 }

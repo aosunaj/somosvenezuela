@@ -6,8 +6,10 @@ import {
   type ConversationInput,
   type ConversationState,
   type Effect,
+  type PublicNeed,
   type PublicPerson,
   type PublicPet,
+  type PublicZone,
   type StepResult,
 } from "../src/index.js";
 
@@ -80,6 +82,34 @@ function synthPublicPet(
     fuente: "propia",
     verificacion: "sin_verificar",
     created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const SYNTH_ZONE_ID = "55555555-5555-4555-8555-555555555555";
+
+function synthPublicZone(overrides: Partial<PublicZone> = {}): PublicZone {
+  return {
+    id: SYNTH_ZONE_ID,
+    nombre: "Plaza Ficticia",
+    lat: null,
+    lng: null,
+    estado: "activa",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const SYNTH_NEED_ID = "66666666-6666-4666-8666-666666666666";
+
+function synthPublicNeed(overrides: Partial<PublicNeed> = {}): PublicNeed {
+  return {
+    id: SYNTH_NEED_ID,
+    zone_id: SYNTH_ZONE_ID,
+    tipo: "agua",
+    urgencia: "media",
+    descripcion: "Falta agua potable",
     updated_at: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
@@ -561,6 +591,114 @@ describe("flujo buscar mascota", () => {
     const blob = serializeAll(res);
     expect(blob).not.toContain("contact_id");
     expect(blob).not.toContain("chat_id");
+  });
+});
+
+// ── Flujo puntos de encuentro (zonas) ────────────────────────────────────────
+
+describe("flujo puntos de encuentro", () => {
+  it("entrar emite list_zones de inmediato (sin paso de query)", () => {
+    const started = step(initialState, text(BUTTON.zonas));
+    expect(started.state).toEqual({ flow: "browse_zones", step: "loading" });
+    expect(started.replies).toHaveLength(0);
+    const effect = started.effect as Extract<Effect, { type: "list_zones" }>;
+    expect(effect.type).toBe("list_zones");
+  });
+
+  it("el comando /zonas tambien abre los puntos de encuentro", () => {
+    const res = step(initialState, cmd("/zonas"));
+    expect(res.state.flow).toBe("browse_zones");
+    expect(res.effect?.type).toBe("list_zones");
+  });
+
+  it("effect_result con zonas las lista y vuelve a idle con el menu", () => {
+    const started = step(initialState, text(BUTTON.zonas));
+    const shown = step(started.state, {
+      kind: "effect_result",
+      result: {
+        type: "list_zones",
+        zones: [synthPublicZone({ nombre: "Plaza Bolivar", estado: "activa" })],
+      },
+    });
+    expect(shown.state).toEqual({ flow: "idle" });
+    const txt = joinReplies(shown);
+    expect(txt).toContain("Plaza Bolivar");
+    expect(txt).toContain("activa");
+    expect(shown.replies.at(-1)?.buttons).toBeDefined();
+  });
+
+  it("lista vacia muestra el mensaje vacio y vuelve a idle", () => {
+    const started = step(initialState, text(BUTTON.zonas));
+    const empty = step(started.state, {
+      kind: "effect_result",
+      result: { type: "list_zones", zones: [] },
+    });
+    expect(empty.state).toEqual({ flow: "idle" });
+    expect(joinReplies(empty)).toContain("Todavia no hay puntos de encuentro");
+  });
+
+  it("texto mientras carga se ignora sin emitir respuesta", () => {
+    const started = step(initialState, text(BUTTON.zonas));
+    const ignored = step(started.state, text("hola"));
+    expect(ignored.state).toEqual({ flow: "browse_zones", step: "loading" });
+    expect(ignored.replies).toHaveLength(0);
+    expect(ignored.effect).toBeUndefined();
+  });
+});
+
+// ── Flujo necesidades ────────────────────────────────────────────────────────
+
+describe("flujo necesidades", () => {
+  it("entrar emite list_needs de inmediato (sin paso de query)", () => {
+    const started = step(initialState, text(BUTTON.necesidades));
+    expect(started.state).toEqual({ flow: "browse_needs", step: "loading" });
+    expect(started.replies).toHaveLength(0);
+    expect(started.effect?.type).toBe("list_needs");
+  });
+
+  it("el comando /necesidades tambien abre las necesidades", () => {
+    const res = step(initialState, cmd("/necesidades"));
+    expect(res.state.flow).toBe("browse_needs");
+    expect(res.effect?.type).toBe("list_needs");
+  });
+
+  it("effect_result con necesidades las lista ORDENADAS por urgencia y vuelve a idle", () => {
+    const started = step(initialState, text(BUTTON.necesidades));
+    const shown = step(started.state, {
+      kind: "effect_result",
+      result: {
+        type: "list_needs",
+        needs: [
+          synthPublicNeed({ tipo: "agua", urgencia: "baja", descripcion: "detalle agua" }),
+          synthPublicNeed({ tipo: "medicinas", urgencia: "critica", descripcion: "detalle medicinas" }),
+          synthPublicNeed({ tipo: "comida", urgencia: "media", descripcion: "detalle comida" }),
+        ],
+      },
+    });
+    expect(shown.state).toEqual({ flow: "idle" });
+    const txt = joinReplies(shown);
+    // La mas urgente (critica) sale antes que la menos urgente (baja).
+    expect(txt.indexOf("medicinas")).toBeLessThan(txt.indexOf("comida"));
+    expect(txt.indexOf("comida")).toBeLessThan(txt.indexOf("agua"));
+    expect(txt).toContain("[critica]");
+    expect(shown.replies.at(-1)?.buttons).toBeDefined();
+  });
+
+  it("lista vacia muestra el mensaje vacio y vuelve a idle", () => {
+    const started = step(initialState, text(BUTTON.necesidades));
+    const empty = step(started.state, {
+      kind: "effect_result",
+      result: { type: "list_needs", needs: [] },
+    });
+    expect(empty.state).toEqual({ flow: "idle" });
+    expect(joinReplies(empty)).toContain("no hay necesidades publicadas");
+  });
+
+  it("texto mientras carga se ignora sin emitir respuesta", () => {
+    const started = step(initialState, text(BUTTON.necesidades));
+    const ignored = step(started.state, text("hola"));
+    expect(ignored.state).toEqual({ flow: "browse_needs", step: "loading" });
+    expect(ignored.replies).toHaveLength(0);
   });
 });
 

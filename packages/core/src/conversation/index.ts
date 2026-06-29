@@ -15,4 +15,6 @@ export {
   petSummary,
   registerPetDone,
   deleteConfirm,
+  zonesList,
+  needsList,
 } from "./messages.js";

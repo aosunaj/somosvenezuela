@@ -203,6 +203,23 @@ async function executeEffect(
         return null;
       }
     }
+    case "list_zones": {
+      try {
+        // Lectura publica del mapa (sin contacto). El fallo lo gestiona el adaptador.
+        const zones = await backend.listZones();
+        return { type: "list_zones", zones };
+      } catch {
+        return null;
+      }
+    }
+    case "list_needs": {
+      try {
+        const needs = await backend.listNeeds();
+        return { type: "list_needs", needs };
+      } catch {
+        return null;
+      }
+    }
     case "delete_person": {
       try {
         // El backend autoriza con el vinculo del canal (solo el dueno puede borrar).

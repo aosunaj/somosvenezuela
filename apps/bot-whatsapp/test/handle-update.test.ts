@@ -5,8 +5,10 @@ import { InMemorySessionStore } from "../src/session-store.js";
 import {
   FakeBackend,
   FakeTransport,
+  publicNeedFixture,
   publicPersonFixture,
   publicPetFixture,
+  publicZoneFixture,
   SYNTH_CONTACT_ID,
   SYNTH_WA_ID,
   textUpdate,
@@ -224,6 +226,86 @@ describe("busqueda de mascotas", () => {
     expect(conversation).not.toContain(SYNTH_CONTACT_ID);
     expect(conversation).not.toContain("contact_id");
     expect(conversation).toContain("Mascota Filtrada");
+  });
+});
+
+describe("puntos de encuentro (zonas)", () => {
+  it("al elegir 'Puntos de encuentro' llama a listZones y muestra el listado", async () => {
+    const backend = new FakeBackend({
+      zoneResults: [publicZoneFixture({ nombre: "Plaza Bolivar", estado: "activa" })],
+    });
+    const { deps, transport, sessions } = makeDeps(backend);
+
+    await send(deps, WA, BUTTON.zonas);
+
+    expect(backend.listZonesCalls).toBe(1);
+    const conversation = transport.allText();
+    expect(conversation).toContain("Plaza Bolivar");
+    expect(conversation).toContain("activa");
+    expect(sessions.get(WA)).toEqual({ flow: "idle" });
+  });
+
+  it("muestra el mensaje vacio cuando no hay zonas todavia", async () => {
+    const backend = new FakeBackend({ zoneResults: [] });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, WA, BUTTON.zonas);
+
+    expect(backend.listZonesCalls).toBe(1);
+    expect(transport.allText()).toContain("Todavia no hay puntos de encuentro");
+  });
+
+  it("responde amable y vuelve a idle si listZones lanza", async () => {
+    const backend = new FakeBackend({ failListZones: true });
+    const { deps, transport, sessions } = makeDeps(backend);
+
+    await expect(send(deps, WA, BUTTON.zonas)).resolves.toBeUndefined();
+
+    expect(backend.listZonesCalls).toBe(1);
+    expect(transport.allText()).toContain("No pudimos completar la busqueda");
+    expect(sessions.get(WA)).toEqual({ flow: "idle" });
+  });
+});
+
+describe("necesidades", () => {
+  it("al elegir 'Necesidades' llama a listNeeds y muestra el listado ordenado", async () => {
+    const backend = new FakeBackend({
+      needResults: [
+        publicNeedFixture({ tipo: "agua", urgencia: "baja", descripcion: "detalle agua" }),
+        publicNeedFixture({ tipo: "medicinas", urgencia: "critica", descripcion: "detalle medicinas" }),
+      ],
+    });
+    const { deps, transport, sessions } = makeDeps(backend);
+
+    await send(deps, WA, BUTTON.necesidades);
+
+    expect(backend.listNeedsCalls).toBe(1);
+    const conversation = transport.allText();
+    expect(conversation).toContain("medicinas");
+    expect(conversation).toContain("[critica]");
+    expect(conversation.indexOf("medicinas")).toBeLessThan(conversation.indexOf("agua"));
+    expect(sessions.get(WA)).toEqual({ flow: "idle" });
+  });
+
+  it("muestra el mensaje vacio cuando no hay necesidades", async () => {
+    const backend = new FakeBackend({ needResults: [] });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, WA, BUTTON.necesidades);
+
+    expect(backend.listNeedsCalls).toBe(1);
+    expect(transport.allText()).toContain("no hay necesidades publicadas");
+  });
+
+  it("responde amable y vuelve a idle si listNeeds lanza", async () => {
+    const backend = new FakeBackend({ failListNeeds: true });
+    const { deps, transport, sessions } = makeDeps(backend);
+
+    await expect(send(deps, WA, BUTTON.necesidades)).resolves.toBeUndefined();
+
+    expect(backend.listNeedsCalls).toBe(1);
+    expect(transport.allText()).toContain("No pudimos completar la busqueda");
+    expect(sessions.get(WA)).toEqual({ flow: "idle" });
   });
 });
 

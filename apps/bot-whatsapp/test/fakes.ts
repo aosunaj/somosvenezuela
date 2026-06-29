@@ -1,3 +1,4 @@
+import type { PublicNeed, PublicZone } from "core";
 import {
   NotOwnerError,
   type BackendClient,
@@ -85,12 +86,20 @@ interface FakeBackendOptions {
   readonly searchResults?: readonly PublicPersonResult[];
   /** Resultados que devolvera `searchPets`. */
   readonly petResults?: readonly PublicPetResult[];
+  /** Zonas que devolvera `listZones` (mapa, lectura publica). */
+  readonly zoneResults?: readonly PublicZone[];
+  /** Necesidades que devolvera `listNeeds` (mapa, lectura publica). */
+  readonly needResults?: readonly PublicNeed[];
   /** Si true, `createPerson`/`registerPerson` lanzan (para probar errores). */
   readonly failCreate?: boolean;
   /** Si true, `searchPersons` lanza. */
   readonly failSearch?: boolean;
   /** Si true, `searchPets` lanza. */
   readonly failSearchPets?: boolean;
+  /** Si true, `listZones` lanza. */
+  readonly failListZones?: boolean;
+  /** Si true, `listNeeds` lanza. */
+  readonly failListNeeds?: boolean;
   /** Si true, `deleteByChannel` lanza NotOwnerError (403: no es el dueno). */
   readonly deleteNotOwner?: boolean;
   /** Si true, `deleteByChannel` lanza un error generico (fallo transitorio). */
@@ -106,6 +115,9 @@ export class FakeBackend implements BackendClient {
   readonly deleteCalls: DeleteCall[] = [];
   readonly searchCalls: SearchCall[] = [];
   readonly petSearchCalls: SearchCall[] = [];
+  /** Cuenta cuantas veces se llamo a cada lectura de mapa (sin argumentos). */
+  listZonesCalls = 0;
+  listNeedsCalls = 0;
   readonly #opts: FakeBackendOptions;
 
   constructor(opts: FakeBackendOptions = {}) {
@@ -173,6 +185,22 @@ export class FakeBackend implements BackendClient {
       throw new Error("backend caido (sintetico)");
     }
     return this.#opts.petResults ?? [];
+  }
+
+  async listZones(): Promise<readonly PublicZone[]> {
+    this.listZonesCalls += 1;
+    if (this.#opts.failListZones === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+    return this.#opts.zoneResults ?? [];
+  }
+
+  async listNeeds(): Promise<readonly PublicNeed[]> {
+    this.listNeedsCalls += 1;
+    if (this.#opts.failListNeeds === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+    return this.#opts.needResults ?? [];
   }
 }
 
@@ -277,4 +305,32 @@ export function publicPetFixture(
     ...overrides,
   };
   return base as unknown as PublicPetResult;
+}
+
+/** Zona publica sintetica (mapa, sin contacto ni identidad interna). */
+export function publicZoneFixture(overrides: Record<string, unknown> = {}): PublicZone {
+  const base = {
+    id: SYNTH_PERSON_ID,
+    nombre: "Plaza Sintetica",
+    lat: null,
+    lng: null,
+    estado: "activa",
+    updated_at: "2026-06-28T00:00:00.000Z",
+    ...overrides,
+  };
+  return base as unknown as PublicZone;
+}
+
+/** Necesidad publica sintetica por zona (mapa, sin contacto). */
+export function publicNeedFixture(overrides: Record<string, unknown> = {}): PublicNeed {
+  const base = {
+    id: SYNTH_PERSON_ID,
+    zone_id: SYNTH_CONTACT_ID,
+    tipo: "agua",
+    urgencia: "alta",
+    descripcion: "Falta agua potable",
+    updated_at: "2026-06-28T00:00:00.000Z",
+    ...overrides,
+  };
+  return base as unknown as PublicNeed;
 }
