@@ -42,6 +42,31 @@ export type PublicPersonResult = PublicPerson & { readonly score?: number };
 export type PublicPetResult = PublicPet & { readonly score?: number };
 
 /**
+ * Estado de la solicitud de reencuentro que el backend devuelve al BUSCADOR. Espeja el
+ * `request_reunion` de la maquina de `core`. NO transporta contacto (guardrail #1):
+ *   - 'requested' : se aviso a la otra parte; se espera su respuesta.
+ *   - 'minor'     : la persona es menor; requiere entidad verificada (guardrail #2).
+ *   - 'failed'    : no se pudo iniciar. Generico, sin revelar si el registro existe.
+ */
+export type ReunionRequestStatus = "requested" | "minor" | "failed";
+
+/** Decision del REGISTRANTE ante la solicitud de reencuentro (/conectar | /rechazar). */
+export type ReunionDecision = "aceptado" | "rechazado";
+
+/**
+ * Estado que el backend devuelve al REGISTRANTE tras su respuesta. Sin contacto:
+ *   - 'not_found'        : no habia una solicitud pendiente para este canal.
+ *   - 'rejected'         : rechazo registrado; nada se compartio.
+ *   - 'exchanged'        : ambos aceptaron; el contacto se entregara por notificacion.
+ *   - 'accepted_waiting' : acepto pero el intercambio aun no procede (caso anomalo).
+ */
+export type ReunionConsentStatus =
+  | "not_found"
+  | "rejected"
+  | "exchanged"
+  | "accepted_waiting";
+
+/**
  * Identidad del canal del usuario, tal como la conoce el adaptador (NO la maquina):
  * la plataforma del bot y el id del chat. El backend usa este vinculo para autorizar
  * el borrado y para entregar notificaciones por el canal correcto.
@@ -110,6 +135,24 @@ export interface BackendClient {
     query: string,
     zona?: string,
   ): Promise<readonly PublicPetResult[]>;
+  /**
+   * REENCUENTRO: el BUSCADOR (por su canal) inicia la conexion con una persona elegida
+   * (POST /reunion/request). El backend pide el consentimiento de la otra parte. NO se
+   * comparte contacto aqui: devuelve solo el estado para que la maquina lo traduzca.
+   */
+  requestReunion(
+    personId: string,
+    channel: ChannelIdentity,
+  ): Promise<ReunionRequestStatus>;
+  /**
+   * REENCUENTRO: el REGISTRANTE (por su canal) acepta o rechaza la solicitud pendiente
+   * (POST /reunion/consent). El backend correlaciona por el contacto del canal. El
+   * contacto, si ambos aceptan, llega despues por notificacion (nunca en esta respuesta).
+   */
+  reunionConsent(
+    decision: ReunionDecision,
+    channel: ChannelIdentity,
+  ): Promise<ReunionConsentStatus>;
   listZones(): Promise<readonly PublicZone[]>;
   listNeeds(): Promise<readonly PublicNeed[]>;
 }
