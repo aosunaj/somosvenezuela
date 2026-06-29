@@ -71,6 +71,7 @@ export interface RepoCalls {
   personCreated: PersonCreate[];
   searchCreated: SearchCreate[];
   removedIds: string[];
+  markedFoundIds: string[];
   searchQueries: Array<{ query: string; zona?: string }>;
   matchCreated: MatchCreate[];
 }
@@ -80,6 +81,7 @@ export function makeRepoCalls(): RepoCalls {
     personCreated: [],
     searchCreated: [],
     removedIds: [],
+    markedFoundIds: [],
     searchQueries: [],
     matchCreated: [],
   };
@@ -109,6 +111,9 @@ export function makeFakePersonRepo(calls: RepoCalls): PersonRepo {
     },
     async remove(id) {
       calls.removedIds.push(id);
+    },
+    async markFound(id) {
+      calls.markedFoundIds.push(id);
     },
   };
 }

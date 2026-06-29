@@ -154,6 +154,34 @@ export class HttpBackendClient implements BackendClient {
     }
   }
 
+  async markFoundByChannel(
+    personId: string,
+    channel: ChannelIdentity,
+  ): Promise<void> {
+    const res = await fetch(
+      `${this.#baseUrl}/persons/${encodeURIComponent(personId)}/found-by-channel`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        // El backend autoriza con el vinculo del canal; no enviamos contact_id.
+        body: JSON.stringify({
+          plataforma: channel.plataforma,
+          chatId: channel.chatId,
+        }),
+      },
+    );
+
+    // 200: autorizado y marcado. 403: el canal no es dueno (fallo esperado).
+    if (res.status === 403) {
+      throw new NotOwnerError();
+    }
+    if (!res.ok) {
+      throw new Error(
+        `POST /persons/:id/found-by-channel fallo con estado ${res.status}`,
+      );
+    }
+  }
+
   async searchPersons(
     query: string,
     zona?: string,

@@ -39,6 +39,8 @@ const CMD_TO_FLOW: Record<string, FlowChoice> = {
   "/registrarmascota": "register_pet",
   "/registrar_mascota": "register_pet",
   "/borrar": "delete",
+  "/rescatado": "mark_found",
+  "/rescatada": "mark_found",
   "/zonas": "browse_zones",
   "/puntos": "browse_zones",
   "/necesidades": "browse_needs",
@@ -55,6 +57,7 @@ const MENU_TEXT: Record<
   | "browse_zones"
   | "browse_needs"
   | "delete"
+  | "mark_found"
   | "help"
 > = {
   [M.BUTTON.registrar.toLowerCase()]: "register",
@@ -63,6 +66,7 @@ const MENU_TEXT: Record<
   [M.BUTTON.buscarMascota.toLowerCase()]: "search_pets",
   [M.BUTTON.zonas.toLowerCase()]: "browse_zones",
   [M.BUTTON.necesidades.toLowerCase()]: "browse_needs",
+  [M.BUTTON.rescatado.toLowerCase()]: "mark_found",
   [M.BUTTON.borrar.toLowerCase()]: "delete",
   [M.BUTTON.ayuda.toLowerCase()]: "help",
 };
@@ -158,6 +162,7 @@ type FlowChoice =
   | "browse_zones"
   | "browse_needs"
   | "delete"
+  | "mark_found"
   | "help";
 
 function startFlow(choice: FlowChoice): StepResult {
@@ -188,6 +193,8 @@ function startFlow(choice: FlowChoice): StepResult {
       return result({ flow: "browse_needs", step: "loading" }, [], { type: "list_needs" });
     case "delete":
       return result({ flow: "delete", step: "id" }, [reply(M.DELETE_ASK_ID)]);
+    case "mark_found":
+      return result({ flow: "mark_found", step: "id" }, [reply(M.MARK_FOUND_ASK_ID)]);
     case "help":
       return result(initialState, [reply(M.HELP), reply(M.WELCOME, M.menuButtons())]);
   }
@@ -227,6 +234,8 @@ export function step(state: ConversationState, input: ConversationInput): StepRe
       return stepBrowseNeeds(state, input);
     case "delete":
       return stepDelete(state, input);
+    case "mark_found":
+      return stepMarkFound(state, input);
   }
 }
 
@@ -714,6 +723,66 @@ function stepDelete(state: DeleteState, input: FlowInput): StepResult {
       );
     }
     case "deleting":
+      // Esperando el effect_result; ignoramos texto.
+      return result(state, []);
+  }
+}
+
+// ── Flujo: rescatado (el dueno marca como encontrado con vida) ────────────────
+
+type MarkFoundState = Extract<ConversationState, { flow: "mark_found" }>;
+
+/**
+ * Espejo de `stepDelete`: pide el id -> confirma -> emite el efecto `mark_found` ->
+ * espera el resultado. El backend autoriza por canal (solo el dueno) igual que el
+ * borrado; el "no es el dueno" llega como `ok:false` y se muestra el fallo generico
+ * sin revelar si el registro existe ni de quien es (guardrail #1).
+ */
+function stepMarkFound(state: MarkFoundState, input: FlowInput): StepResult {
+  if (input.kind === "effect_result") {
+    if (state.step !== "marking" || input.result.type !== "mark_found") {
+      return result({ flow: "mark_found", step: "id" }, [reply(M.MARK_FOUND_ASK_ID)]);
+    }
+    return input.result.ok
+      ? toMenu(M.MARK_FOUND_DONE)
+      : result(
+          { flow: "mark_found", step: "id" },
+          [reply(M.MARK_FOUND_FAILED)],
+        );
+  }
+
+  // input.kind === 'text'
+  switch (state.step) {
+    case "id": {
+      const id = input.text.trim();
+      const parsed = idSchema.safeParse(id);
+      if (!parsed.success) {
+        return result({ flow: "mark_found", step: "id" }, [reply(M.MARK_FOUND_INVALID_ID)]);
+      }
+      return result(
+        { flow: "mark_found", step: "confirm", personId: parsed.data },
+        [reply(M.markFoundConfirm(parsed.data), M.confirmButtons())],
+      );
+    }
+    case "confirm": {
+      if (isCancel(input.text)) {
+        // Cancelar desde la confirmacion: volvemos al menu sin marcar.
+        return toMenu(M.CANCELLED);
+      }
+      if (!isConfirm(input.text)) {
+        // Cualquier respuesta que no sea confirmar re-pide la confirmacion.
+        const pid = state.personId ?? "";
+        return result(state, [reply(M.markFoundConfirm(pid), M.confirmButtons())]);
+      }
+      const personId = state.personId ?? "";
+      // La autorizacion real (que sea el dueno) la hace el adaptador/backend.
+      return result(
+        { flow: "mark_found", step: "marking", personId },
+        [],
+        { type: "mark_found", personId },
+      );
+    }
+    case "marking":
       // Esperando el effect_result; ignoramos texto.
       return result(state, []);
   }

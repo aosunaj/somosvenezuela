@@ -13,6 +13,7 @@ import { registerZoneRoutes } from "./routes/zones.js";
 import { registerNeedRoutes } from "./routes/needs.js";
 import { registerRegisterLinkedRoutes } from "./routes/register-linked.js";
 import { registerDeleteSecureRoutes } from "./routes/delete-secure.js";
+import { registerMarkFoundSecureRoutes } from "./routes/mark-found-secure.js";
 import { registerNotificationsRoutes } from "./routes/notifications.js";
 import { registerMatchRoutes } from "./routes/matches.js";
 import { registerSearchRoutes } from "./routes/search.js";
@@ -84,6 +85,11 @@ export async function buildApp(
   registerDeleteSecureRoutes(app, {
     channelLinkRepo: deps.channelLinkRepo,
     secureDeleteRepo: deps.secureDeleteRepo,
+  });
+  registerMarkFoundSecureRoutes(app, {
+    channelLinkRepo: deps.channelLinkRepo,
+    secureDeleteRepo: deps.secureDeleteRepo,
+    personRepo: deps.personRepo,
   });
   registerNotificationsRoutes(app, {
     notificationRepo: deps.notificationRepo,

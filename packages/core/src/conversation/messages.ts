@@ -15,6 +15,7 @@ export const BUTTON = {
   buscarMascota: "Buscar mascota",
   zonas: "Puntos de encuentro",
   necesidades: "Necesidades",
+  rescatado: "Marcar como encontrada",
   borrar: "Borrar mi registro",
   ayuda: "Ayuda",
   confirmar: "Confirmar",
@@ -28,6 +29,7 @@ export function menuButtons(): string[][] {
     [BUTTON.registrar, BUTTON.buscar],
     [BUTTON.registrarMascota, BUTTON.buscarMascota],
     [BUTTON.zonas, BUTTON.necesidades],
+    [BUTTON.rescatado],
     [BUTTON.borrar],
     [BUTTON.ayuda],
   ];
@@ -57,6 +59,7 @@ export const HELP =
   "- Buscar una mascota perdida.\n" +
   "- Ver los puntos de encuentro y las zonas.\n" +
   "- Ver las necesidades de cada zona.\n" +
+  "- Marcar como encontrada con vida a una persona que registraste.\n" +
   "- Borrar un registro que hayas creado.\n\n" +
   "En cualquier momento puedes escribir /cancelar para volver al inicio.";
 
@@ -350,3 +353,31 @@ export const DELETE_DONE =
 
 export const DELETE_FAILED =
   "No pudimos borrar el registro ahora mismo. Comprueba el identificador o intentalo mas tarde.";
+
+// ── Rescatado (el dueno marca su registro como encontrado con vida) ──────────
+
+export const MARK_FOUND_ASK_ID =
+  "Que alegria. Para marcar a tu registro como encontrado con vida necesito su " +
+  "identificador. Pegalo aqui tal como lo recibiste.";
+
+export const MARK_FOUND_INVALID_ID =
+  "Ese identificador no tiene el formato correcto. Revisa y vuelve a pegarlo.";
+
+/**
+ * Pide confirmacion antes de marcar como encontrada. Aclara que es un reporte del
+ * dueno (sin verificar): la confirmacion oficial la hace una entidad verificada
+ * aparte. El id se muestra para que el usuario lo verifique.
+ */
+export function markFoundConfirm(personId: string): string {
+  return (
+    `Vas a marcar el registro ${personId} como ENCONTRADO con vida.\n` +
+    "Quedara como reporte tuyo (sin verificar) hasta que una entidad lo confirme. " +
+    "¿Confirmas?"
+  );
+}
+
+export const MARK_FOUND_DONE =
+  "Marcado como encontrado con vida. Gracias por avisar: nadie se queda atras.";
+
+export const MARK_FOUND_FAILED =
+  "No pudimos marcar el registro ahora mismo. Comprueba el identificador o intentalo mas tarde.";

@@ -15,6 +15,7 @@ import {
 //   POST   `${BACKEND_URL}/register-person`         -> crea persona VINCULADA al canal.
 //   POST   `${BACKEND_URL}/pets`                     -> crea mascota VINCULADA al canal.
 //   DELETE `${BACKEND_URL}/persons/:id/by-channel`  -> borra si el canal es dueno.
+//   POST   `${BACKEND_URL}/persons/:id/found-by-channel` -> marca encontrado si dueno.
 //   POST   `${BACKEND_URL}/searches`                -> busca persona, vincula al buscador.
 //   GET    `${BACKEND_URL}/search/pets`             -> busca mascotas (vista publica).
 //   GET    `${BACKEND_URL}/zones`                   -> lista zonas publicas (mapa).
@@ -149,6 +150,34 @@ export class HttpBackendClient implements BackendClient {
     if (!res.ok) {
       throw new Error(
         `DELETE /persons/:id/by-channel fallo con estado ${res.status}`,
+      );
+    }
+  }
+
+  async markFoundByChannel(
+    personId: string,
+    channel: ChannelIdentity,
+  ): Promise<void> {
+    const res = await fetch(
+      `${this.#baseUrl}/persons/${encodeURIComponent(personId)}/found-by-channel`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        // El backend autoriza con el vinculo del canal; no enviamos contact_id.
+        body: JSON.stringify({
+          plataforma: channel.plataforma,
+          chatId: channel.chatId,
+        }),
+      },
+    );
+
+    // 200: autorizado y marcado. 403: el canal no es dueno (fallo esperado).
+    if (res.status === 403) {
+      throw new NotOwnerError();
+    }
+    if (!res.ok) {
+      throw new Error(
+        `POST /persons/:id/found-by-channel fallo con estado ${res.status}`,
       );
     }
   }

@@ -71,6 +71,11 @@ export interface DeleteCall {
   readonly channel: ChannelIdentity;
 }
 
+export interface MarkFoundCall {
+  readonly personId: string;
+  readonly channel: ChannelIdentity;
+}
+
 export interface SearchCall {
   readonly query: string;
   readonly zona?: string;
@@ -100,6 +105,10 @@ interface FakeBackendOptions {
   readonly deleteNotOwner?: boolean;
   /** Si true, `deleteByChannel` lanza un error generico (fallo transitorio). */
   readonly failDelete?: boolean;
+  /** Si true, `markFoundByChannel` lanza NotOwnerError (403: no es el dueno). */
+  readonly markFoundNotOwner?: boolean;
+  /** Si true, `markFoundByChannel` lanza un error generico (fallo transitorio). */
+  readonly failMarkFound?: boolean;
   /** Id que devuelve `createPerson`/`registerPerson` cuando no falla. */
   readonly createdId?: string;
 }
@@ -109,6 +118,7 @@ export class FakeBackend implements BackendClient {
   readonly registerCalls: RegisterCall[] = [];
   readonly registerPetCalls: RegisterPetCall[] = [];
   readonly deleteCalls: DeleteCall[] = [];
+  readonly markFoundCalls: MarkFoundCall[] = [];
   readonly searchCalls: SearchCall[] = [];
   readonly petSearchCalls: SearchCall[] = [];
   /** Cuenta cuantas veces se llamo a cada lectura de mapa (sin argumentos). */
@@ -156,6 +166,16 @@ export class FakeBackend implements BackendClient {
       throw new NotOwnerError();
     }
     if (this.#opts.failDelete === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+  }
+
+  async markFoundByChannel(personId: string, channel: ChannelIdentity): Promise<void> {
+    this.markFoundCalls.push({ personId, channel });
+    if (this.#opts.markFoundNotOwner === true) {
+      throw new NotOwnerError();
+    }
+    if (this.#opts.failMarkFound === true) {
       throw new Error("backend caido (sintetico)");
     }
   }

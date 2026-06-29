@@ -467,6 +467,55 @@ describe("borrado seguro por canal", () => {
   });
 });
 
+describe("rescatado seguro por canal (el dueno marca como encontrado con vida)", () => {
+  const SYNTH_ID = "11111111-1111-4111-8111-111111111111";
+
+  it("marca de verdad cuando el canal es el dueno: llama a markFoundByChannel con la identidad y confirma", async () => {
+    const backend = new FakeBackend();
+    const { deps, transport, sessions } = makeDeps(backend);
+
+    await send(deps, CHAT, BUTTON.rescatado, SYNTH_ID, BUTTON.confirmar);
+
+    // Se llamo al rescatado seguro con el id y la identidad del canal (chatId como cadena).
+    expect(backend.markFoundCalls).toHaveLength(1);
+    expect(backend.markFoundCalls[0]?.personId).toBe(SYNTH_ID);
+    expect(backend.markFoundCalls[0]?.channel).toEqual({
+      plataforma: "telegram",
+      chatId: String(CHAT),
+    });
+
+    // La maquina confirma el marcado y vuelve a idle.
+    expect(transport.allText()).toContain("encontrado con vida");
+    expect(sessions.get(CHAT)).toEqual({ flow: "idle" });
+  });
+
+  it("ante un 403 (no es el dueno) responde el fallo amable sin revelar la causa", async () => {
+    const backend = new FakeBackend({ markFoundNotOwner: true });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, CHAT, BUTTON.rescatado, SYNTH_ID, BUTTON.confirmar);
+
+    expect(backend.markFoundCalls).toHaveLength(1);
+    // Mensaje generico de la maquina (no confirma existencia ni pertenencia a un tercero).
+    const conversation = transport.allText();
+    expect(conversation).toContain("No pudimos marcar el registro");
+    expect(conversation).not.toContain("403");
+    expect(conversation).not.toContain("dueno");
+  });
+
+  it("no crashea si el marcado falla por un error transitorio del backend", async () => {
+    const backend = new FakeBackend({ failMarkFound: true });
+    const { deps, transport } = makeDeps(backend);
+
+    await expect(
+      send(deps, CHAT, BUTTON.rescatado, SYNTH_ID, BUTTON.confirmar),
+    ).resolves.toBeUndefined();
+
+    expect(backend.markFoundCalls).toHaveLength(1);
+    expect(transport.allText()).toContain("No pudimos marcar el registro");
+  });
+});
+
 describe("comandos y updates raros", () => {
   it("normaliza /start y muestra el menu", async () => {
     const backend = new FakeBackend();

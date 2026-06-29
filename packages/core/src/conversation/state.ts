@@ -37,6 +37,11 @@ export type Effect =
   | { readonly type: "search_persons"; readonly query: string; readonly zona?: string }
   | { readonly type: "search_pets"; readonly query: string; readonly zona?: string }
   | { readonly type: "delete_person"; readonly personId: string }
+  // Reporte del DUENO: marca su registro como encontrado con vida. El backend lo
+  // autoriza por canal (igual que delete_person) y fija estado=encontrada_viva,
+  // verificacion=sin_verificar (un reporte del dueno SUGIERE, no confirma; la
+  // confirmacion oficial por entidad verificada es un paso aparte).
+  | { readonly type: "mark_found"; readonly personId: string }
   // Vistas de SOLO LECTURA del mapa: no llevan query ni dato alguno; el adaptador
   // hace un GET publico al backend (paridad bot<->web). Sin contacto ni PII.
   | { readonly type: "list_zones" }
@@ -85,6 +90,15 @@ export type DeletePersonResult =
   | { readonly type: "delete_person"; readonly ok: false };
 
 /**
+ * Resultado de `mark_found`: ok o fallo. Espeja `delete_person`: el "no es el dueno"
+ * (403 del backend) se modela IGUAL que cualquier otro fallo como `ok: false`, para
+ * no revelar si el registro existe ni de quien es (guardrail #1).
+ */
+export type MarkFoundResult =
+  | { readonly type: "mark_found"; readonly ok: true }
+  | { readonly type: "mark_found"; readonly ok: false };
+
+/**
  * Resultado de `list_zones`: las zonas publicas (puntos de encuentro) del mapa.
  * Vista publica `PublicZone` (sin contacto ni identidad interna, guardrail #1).
  */
@@ -109,6 +123,7 @@ export type EffectResult =
   | SearchPersonsResult
   | SearchPetsResult
   | DeletePersonResult
+  | MarkFoundResult
   | ListZonesResult
   | ListNeedsResult;
 
@@ -186,6 +201,14 @@ export type ConversationState =
   | {
       readonly flow: "delete";
       readonly step: "id" | "confirm" | "deleting";
+      readonly personId?: string;
+    }
+  // Reporte del dueno "apareci con vida": espeja el flujo delete (pide id ->
+  // confirma -> emite el efecto -> espera el resultado). El backend autoriza por
+  // canal igual que el borrado. MEJORA FUTURA: distinguir encontrada_herida.
+  | {
+      readonly flow: "mark_found";
+      readonly step: "id" | "confirm" | "marking";
       readonly personId?: string;
     }
   // Vistas de SOLO LECTURA del mapa: al entrar se emite el effect y se queda en
