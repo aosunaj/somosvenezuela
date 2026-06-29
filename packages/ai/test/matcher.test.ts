@@ -203,6 +203,74 @@ describe("rankCandidates — score honesto multi-campo (no 100% por nombre suelt
   });
 });
 
+describe("rankCandidates — busqueda por CUALQUIER subconjunto de campos", () => {
+  // Requisito de producto: en emergencia, "quien hay registrado en La Guaira" es
+  // un caso real. Se puede buscar por cualquier subconjunto (solo zona, solo senas,
+  // nombre+zona...). El score se RE-NORMALIZA sobre los campos provistos: un campo
+  // ausente en la query ni penaliza ni aporta.
+  const ID_A = "55555555-5555-4555-8555-555555555555";
+  const ID_B = "66666666-6666-4666-8666-666666666666";
+
+  it("solo zona: coincidencia plena de zona da score alto (no capado al 15%)", async () => {
+    const ranked = await rankCandidates({ zona: "La Guaira" }, [
+      person(ID_A, "Pedro", { apellidos: "Lopez", zona: "La Guaira" }),
+    ]);
+    expect(ranked[0]?.candidate.id).toBe(ID_A);
+    // Zona identica y unico campo provisto -> score pleno (re-normalizado a 1).
+    expect(ranked[0]?.score).toBe(1);
+    // Sin nombre en la query NUNCA es 'exacto' (no es una identidad confirmada).
+    expect(ranked[0]?.method).not.toBe("exacto");
+  });
+
+  it("solo zona: ordena por parecido de zona y deja lejos la zona distinta", async () => {
+    const ranked = await rankCandidates({ zona: "La Guaira" }, [
+      person(ID_B, "Ana", { apellidos: "Diaz", zona: "Maracaibo" }),
+      person(ID_A, "Pedro", { apellidos: "Lopez", zona: "La Guaira" }),
+    ]);
+    expect(ranked[0]?.candidate.id).toBe(ID_A);
+    const lejano = ranked.find((r) => r.candidate.id === ID_B);
+    expect(lejano?.score).toBeLessThan(ranked[0]!.score);
+  });
+
+  it("solo descripcion: puntua por las senas, sin exigir nombre", async () => {
+    const ranked = await rankCandidates({ descripcion: "camisa roja y gorra azul" }, [
+      person(ID_A, "Persona", { descripcion: "camisa roja y gorra azul" }),
+    ]);
+    expect(ranked[0]?.candidate.id).toBe(ID_A);
+    expect(ranked[0]?.score).toBe(1);
+    expect(ranked[0]?.method).not.toBe("exacto");
+  });
+
+  it("nombre+zona: re-normaliza sobre esos dos pesos (nombre parcial + zona plena)", async () => {
+    // Nombre de pila suelto (parcial) PERO zona identica. El score es la media
+    // ponderada sobre nombre(0.7)+zona(0.15) re-normalizada a 1; la zona plena
+    // eleva el resultado por encima de "solo nombre" del mismo candidato.
+    const candidate = person(ID_A, "Ana", { apellidos: "Osuna Jurado", zona: "Chacao" });
+    const conZona = await rankCandidates({ nombre: "Ana", zona: "Chacao" }, [candidate]);
+    const soloNombre = await rankCandidates({ nombre: "Ana" }, [candidate]);
+    expect(conZona[0]!.score).toBeGreaterThan(soloNombre[0]!.score);
+    expect(conZona[0]!.score).toBeLessThan(1); // nombre sigue parcial: no es certeza
+  });
+
+  it("query con nombre presente NO cambia su score por la re-normalizacion", async () => {
+    // El divisor con nombre presente es el mismo de siempre (la query traia nombre),
+    // asi que un match completo de nombre sigue dando 1.0 'exacto' como antes.
+    const ranked = await rankCandidates({ nombre: "Maria Gonzalez" }, [
+      person(ID_A, "Maria", { apellidos: "Gonzalez" }),
+    ]);
+    expect(ranked[0]?.score).toBe(1);
+    expect(ranked[0]?.method).toBe("exacto");
+  });
+
+  it("query sin ningun campo da score 0 (nada que comparar)", async () => {
+    const ranked = await rankCandidates({}, [
+      person(ID_A, "Pedro", { apellidos: "Lopez", zona: "La Guaira" }),
+    ]);
+    expect(ranked[0]?.score).toBe(0);
+    expect(ranked[0]?.method).not.toBe("exacto");
+  });
+});
+
 describe("rankCandidates — entradas borde", () => {
   it("universo vacio devuelve lista vacia", async () => {
     const ranked = await rankCandidates({ nombre: "Jose" }, []);

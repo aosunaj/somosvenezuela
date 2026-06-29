@@ -32,10 +32,18 @@ import type { AiScorer } from "./scorer.js";
  */
 export type MatchMethod = "exacto" | "trigram" | "ia";
 
-/** Busqueda de entrada para el matcher (texto libre, sin datos de contacto). */
+/**
+ * Busqueda de entrada para el matcher (texto libre, sin datos de contacto).
+ *
+ * Todos los campos son OPCIONALES: se puede buscar por cualquier subconjunto
+ * (solo nombre, solo zona, solo descripcion, o combinaciones). El score se
+ * normaliza sobre los campos REALMENTE provistos; un campo ausente ni penaliza
+ * ni aporta. La capa que invoca al matcher es responsable de exigir al menos un
+ * campo (no tiene sentido rankear sin ningun criterio).
+ */
 export interface MatchQuery {
-  /** Nombre/identificador buscado (obligatorio para puntuar por nombre). */
-  readonly nombre: string;
+  /** Nombre/identificador buscado, opcional. */
+  readonly nombre?: string;
   /** Zona buscada, opcional. */
   readonly zona?: string;
   /** Descripcion libre buscada, opcional. */
@@ -150,27 +158,41 @@ function candidateFullName(candidate: PublicPerson): string {
 }
 
 /**
- * Media ponderada de las similitudes por campo presentes en la query.
+ * Media ponderada de las similitudes por campo REALMENTE provisto en la query.
  *
- * Devuelve el `score` agregado [0,1] y `exact`: si la coincidencia es PERFECTA
- * en todos los campos comparados (score === 1). Coincidir un solo campo (p. ej.
- * el nombre de pila de un registro con apellidos) ya NO puede dar 1, porque la
- * similitud de nombre es token a token y penaliza los tokens sin cubrir: el
- * resultado es la MEDIA, nunca el maximo de un campo (guardrail #4 — la IA
- * sugiere, nunca afirma certeza por un acierto parcial).
+ * RE-NORMALIZACION SOBRE LO PROVISTO: el divisor es la suma de pesos de los
+ * campos que la QUERY trae (no la suma fija de los tres pesos). Asi, una query
+ * que solo trae zona refleja PLENAMENTE la coincidencia de zona (no capada al
+ * 15%); una query con nombre+zona se normaliza sobre esos dos pesos; etc. Un
+ * campo ausente en la query ni penaliza ni aporta. Cuando hay nombre presente,
+ * el resultado no cambia respecto al comportamiento previo (mismos pesos, mismo
+ * divisor: la query siempre traia nombre).
+ *
+ * Devuelve el `score` agregado [0,1] y `exact`: solo TRUE si la query trae
+ * nombre y la coincidencia es PERFECTA en todos los campos comparados
+ * (score === 1). Coincidir un solo campo (p. ej. el nombre de pila de un
+ * registro con apellidos) ya NO puede dar 1, porque la similitud de nombre es
+ * token a token y penaliza los tokens sin cubrir: el resultado es la MEDIA,
+ * nunca el maximo de un campo (guardrail #4 — la IA sugiere, nunca afirma
+ * certeza por un acierto parcial). Una query SIN nombre nunca es 'exacto'.
  */
 function localScore(
   query: MatchQuery,
   candidate: PublicPerson,
   weights: { nombre: number; zona: number; descripcion: number },
 ): { score: number; exact: boolean } {
-  const qName = normalizeName(query.nombre);
-  const cName = candidateFullName(candidate);
-  const nameSim = nameSimilarity(qName, cName);
+  // El nombre solo pondera si la query lo trae (no vacio tras normalizar).
+  const qName = query.nombre !== undefined ? normalizeName(query.nombre) : "";
+  const hasName = qName.length > 0;
 
-  let weightSum = weights.nombre;
-  let acc = weights.nombre * nameSim;
+  let weightSum = 0;
+  let acc = 0;
 
+  if (hasName) {
+    const nameSim = nameSimilarity(qName, candidateFullName(candidate));
+    acc += weights.nombre * nameSim;
+    weightSum += weights.nombre;
+  }
   if (query.zona !== undefined && candidate.zona !== null) {
     const sim = fieldSimilarity(normalizeText(query.zona), normalizeText(candidate.zona));
     acc += weights.zona * sim;
@@ -186,9 +208,10 @@ function localScore(
   }
 
   const score = weightSum > 0 ? clamp01(acc / weightSum) : 0;
-  // 'exacto' SOLO si la media ponderada es perfecta: todos los campos casan al
-  // 100%. Un acierto parcial (nombre de pila suelto) cae por debajo de 1.
-  const exact = qName.length > 0 && score >= 1;
+  // 'exacto' SOLO si la query trae nombre y la media ponderada es perfecta:
+  // todos los campos comparados casan al 100%. Un acierto parcial (nombre de
+  // pila suelto) cae por debajo de 1; una query sin nombre nunca es 'exacto'.
+  const exact = hasName && score >= 1;
   return { score, exact };
 }
 
@@ -217,7 +240,9 @@ export async function rankCandidates(
   const doubtMax = clamp01(options.aiDoubtMax ?? DEFAULT_AI_DOUBT_MAX);
   const aiScorer = options.aiScorer;
 
-  const qName = normalizeName(query.nombre);
+  // Nombre normalizado para la peticion a la IA (vacio si la query no trae nombre;
+  // en ese caso la banda de duda rara vez se activa y la IA no se invoca).
+  const qName = query.nombre !== undefined ? normalizeName(query.nombre) : "";
   const qZone = query.zona !== undefined ? normalizeText(query.zona) : undefined;
   const qDesc =
     query.descripcion !== undefined ? normalizeText(query.descripcion) : undefined;

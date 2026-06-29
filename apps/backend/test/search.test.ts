@@ -161,6 +161,54 @@ describe("POST /searches", () => {
     }
   });
 
+  it("busca SOLO por zona (sin nombre) y devuelve results", async () => {
+    // Caso real de emergencia: "quien hay registrado en La Guaira". Sin nombre, el
+    // backend recupera el pool con q vacio y la zona como filtro, y re-rankea.
+    const res = await app.inject({
+      method: "POST",
+      url: "/searches",
+      payload: { tipo: "persona", zona: "Zona Sintetica Norte" },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(Array.isArray(body.results)).toBe(true);
+    expect(body.results.length).toBeGreaterThan(0);
+    expect(body.results[0].score).toBeTypeOf("number");
+    assertNoContact(res.payload);
+    // El RPC recibe q vacio y la zona como filtro (no exige nombre).
+    expect(calls.searchQueries[0]).toEqual({ query: "", zona: "Zona Sintetica Norte" });
+  });
+
+  it("busca SOLO por descripcion (sin nombre ni zona) y devuelve results", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/searches",
+      payload: { tipo: "persona", target_descripcion: "camisa roja" },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(Array.isArray(body.results)).toBe(true);
+    expect(body.results.length).toBeGreaterThan(0);
+    // Sin nombre, el termino libre del RPC es la descripcion; sin zona, sin filtro.
+    expect(calls.searchQueries[0]).toEqual({ query: "camisa roja" });
+  });
+
+  it("sin NINGUN criterio (solo tipo) no dispara busqueda: results vacio", async () => {
+    // El guard de la busqueda guiada exige al menos un dato; aqui defendemos el
+    // mismo contrato a nivel de API: sin criterio, no se recupera nada.
+    const res = await app.inject({
+      method: "POST",
+      url: "/searches",
+      payload: { tipo: "persona" },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().results).toEqual([]);
+    expect(calls.searchQueries).toHaveLength(0);
+  });
+
   it("rechaza body invalido con 400 (tipo no valido)", async () => {
     const res = await app.inject({
       method: "POST",
