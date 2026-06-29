@@ -36,6 +36,22 @@ function run(
 const text = (t: string): ConversationInput => ({ kind: "text", text: t });
 const cmd = (c: string): ConversationInput => ({ kind: "command", command: c });
 
+/**
+ * Secuencia de inputs que recorre la BUSQUEDA GUIADA con solo el nombre `query`
+ * (apellidos, edad, zona y senas omitidos), dejando el ultimo paso listo para
+ * disparar el efecto `search_persons`. Espeja el atajo de los tests de adaptador.
+ */
+function searchByName(query: string): ConversationInput[] {
+  return [
+    text(BUTTON.buscar), // inicia el flujo de busqueda guiada
+    text(query), // nombre
+    text(BUTTON.omitir), // apellidos
+    text(BUTTON.omitir), // edad
+    text(BUTTON.omitir), // zona
+    text(BUTTON.omitir), // senas -> dispara la busqueda
+  ];
+}
+
 /** Concatena el texto de todas las replies de un resultado. */
 function joinReplies(res: StepResult): string {
   return res.replies.map((r) => r.text).join("\n");
@@ -498,17 +514,117 @@ describe("validacion de entrada (re-pide, no avanza, no crashea)", () => {
 
 // ── Flujo buscar ─────────────────────────────────────────────────────────────
 
-describe("flujo buscar", () => {
-  it("query -> emite search_persons -> resultados -> ofrece conectar (choosing)", () => {
+describe("flujo buscar guiado", () => {
+  it("arranca pidiendo el nombre con boton Omitir (espeja registrar)", () => {
     const started = step(initialState, text(BUTTON.buscar));
     expect(started.state.flow).toBe("search");
+    const state = started.state as Extract<ConversationState, { flow: "search" }>;
+    expect(state.step).toBe("nombre");
+    // El prompt ofrece Omitir desde el primer paso (todo es salteable).
+    const buttons = JSON.stringify(started.replies[0]?.buttons);
+    expect(buttons).toContain(BUTTON.omitir);
+  });
 
-    const queried = step(started.state, text("Maria Caracas"));
-    expect(queried.replies).toHaveLength(0);
-    const effect = queried.effect as Extract<Effect, { type: "search_persons" }>;
+  it("recorre nombre -> apellidos -> edad -> zona -> senas y dispara search_persons", () => {
+    // nombre + apellidos => query unida; zona y senas => campos estructurados.
+    const res = run(initialState, [
+      text(BUTTON.buscar),
+      text("Maria"), // nombre
+      text("Perez"), // apellidos
+      text(BUTTON.omitir), // edad (no la usa el matcher hoy)
+      text("Caracas"), // zona
+      text("vestido rojo"), // senas -> dispara la busqueda
+    ]);
+    expect(res.replies).toHaveLength(0);
+    const effect = res.effect as Extract<Effect, { type: "search_persons" }>;
     expect(effect.type).toBe("search_persons");
-    expect(effect.query).toBe("Maria Caracas");
+    // El nombre buscado = nombre + apellidos juntos (asi lo puntua el matcher).
+    expect(effect.query).toBe("Maria Perez");
+    // Zona y senas viajan como campos estructurados ponderados del matcher.
+    expect(effect.zona).toBe("Caracas");
+    expect(effect.descripcion).toBe("vestido rojo");
+    expect((res.state as Extract<ConversationState, { flow: "search" }>).step).toBe(
+      "searching",
+    );
+    // El efecto NO transporta contacto (guardrail #1).
+    expect(serializeAll(res)).not.toContain("contact");
+    expect(serializeAll(res)).not.toContain("telefono");
+  });
 
+  it("la edad se recoge pero NO viaja en el efecto (el matcher no la pondera hoy)", () => {
+    const res = run(initialState, [
+      text(BUTTON.buscar),
+      text("Luis"),
+      text(BUTTON.omitir), // apellidos
+      text("40"), // edad valida
+      text(BUTTON.omitir), // zona
+      text(BUTTON.omitir), // senas
+    ]);
+    const effect = res.effect as Extract<Effect, { type: "search_persons" }>;
+    expect(effect.query).toBe("Luis");
+    // La edad recolectada no se serializa en el efecto (sin romper: futuro uso).
+    expect(serializeAll(res)).not.toContain("edad");
+    expect(serializeAll(res)).not.toContain("40");
+  });
+
+  it("buscar con un solo dato (resto omitido) tambien dispara la busqueda", () => {
+    const res = run(initialState, searchByName("Maria"));
+    const effect = res.effect as Extract<Effect, { type: "search_persons" }>;
+    expect(effect.type).toBe("search_persons");
+    expect(effect.query).toBe("Maria");
+    expect(effect.zona).toBeUndefined();
+    expect(effect.descripcion).toBeUndefined();
+  });
+
+  it("buscar con solo la zona (nombre omitido) tambien dispara la busqueda", () => {
+    const res = run(initialState, [
+      text(BUTTON.buscar),
+      text(BUTTON.omitir), // nombre
+      text(BUTTON.omitir), // apellidos
+      text(BUTTON.omitir), // edad
+      text("Maracaibo"), // zona
+      text(BUTTON.omitir), // senas
+    ]);
+    const effect = res.effect as Extract<Effect, { type: "search_persons" }>;
+    expect(effect.type).toBe("search_persons");
+    // Sin nombre la query queda vacia; el adaptador igual envia la zona estructurada.
+    expect(effect.query).toBe("");
+    expect(effect.zona).toBe("Maracaibo");
+  });
+
+  it("omitir TODO no busca con vacio: pide al menos un dato y reinicia en nombre", () => {
+    const res = run(initialState, [
+      text(BUTTON.buscar),
+      text(BUTTON.omitir), // nombre
+      text(BUTTON.omitir), // apellidos
+      text(BUTTON.omitir), // edad
+      text(BUTTON.omitir), // zona
+      text(BUTTON.omitir), // senas -> todo vacio
+    ]);
+    // No se emite efecto: no buscamos con vacio.
+    expect(res.effect).toBeUndefined();
+    expect(joinReplies(res)).toContain("al menos un dato");
+    // Reinicia la recoleccion desde el nombre (sin perder el flujo).
+    const state = res.state as Extract<ConversationState, { flow: "search" }>;
+    expect(state.flow).toBe("search");
+    expect(state.step).toBe("nombre");
+  });
+
+  it("edad invalida re-pide el mismo paso con Omitir (no avanza)", () => {
+    const res = run(initialState, [
+      text(BUTTON.buscar),
+      text("Ana"),
+      text(BUTTON.omitir), // apellidos
+      text("doscientos"), // edad invalida
+    ]);
+    expect(res.effect).toBeUndefined();
+    const state = res.state as Extract<ConversationState, { flow: "search" }>;
+    expect(state.step).toBe("edad");
+    expect(joinReplies(res).toLowerCase()).toContain("edad");
+  });
+
+  it("resultados -> ofrece conectar (choosing) guardando los ids publicos", () => {
+    const queried = run(initialState, searchByName("Maria"));
     const withResults = step(queried.state, {
       kind: "effect_result",
       result: {
@@ -516,7 +632,6 @@ describe("flujo buscar", () => {
         results: [synthPublicPerson({ score: 0.91 })],
       },
     });
-    // Con resultados pasamos a 'choosing' para ofrecer conectar (reencuentro).
     const state = withResults.state as Extract<ConversationState, { flow: "search" }>;
     expect(state.flow).toBe("search");
     expect(state.step).toBe("choosing");
@@ -529,26 +644,18 @@ describe("flujo buscar", () => {
     expect(txt).toContain("91%");
     // El prompt de conexion invita a elegir un numero, sin exponer contacto.
     expect(txt.toLowerCase()).toContain("numero");
-    // El estado/efecto NO transporta dato de contacto (guardrail #1).
     expect(serializeAll(withResults)).not.toContain("contact_id");
     expect(serializeAll(withResults)).not.toContain("telefono");
   });
 
   it("cero resultados muestra mensaje claro y vuelve a idle (sin conectar)", () => {
-    const queried = run(initialState, [text(BUTTON.buscar), text("nadie")]);
+    const queried = run(initialState, searchByName("nadie"));
     const empty = step(queried.state, {
       kind: "effect_result",
       result: { type: "search_persons", results: [] },
     });
     expect(empty.state).toEqual({ flow: "idle" });
     expect(joinReplies(empty)).toContain("No encontramos");
-  });
-
-  it("query vacio re-pide sin emitir efecto", () => {
-    const started = step(initialState, text(BUTTON.buscar));
-    const res = step(started.state, text("   "));
-    expect(res.effect).toBeUndefined();
-    expect(res.state.flow).toBe("search");
   });
 });
 
@@ -557,7 +664,7 @@ describe("flujo buscar", () => {
 describe("flujo reencuentro (buscador elige)", () => {
   /** Lleva la conversacion hasta el paso 'choosing' con un resultado. */
   function untilChoosing(): StepResult {
-    const queried = run(initialState, [text(BUTTON.buscar), text("Maria")]);
+    const queried = run(initialState, searchByName("Maria"));
     return step(queried.state, {
       kind: "effect_result",
       result: { type: "search_persons", results: [synthPublicPerson({ score: 0.9 })] },
@@ -977,8 +1084,8 @@ describe("contrato de privacidad: ninguna Reply ni Effect filtra contacto", () =
     expect(blob).not.toContain("chat_id");
   });
 
-  it("el efecto search_persons no incluye zona/contacto sensibles inesperados", () => {
-    const res = run(initialState, [text(BUTTON.buscar), text("alguien")]);
+  it("el efecto search_persons no incluye contacto sensible inesperado", () => {
+    const res = run(initialState, searchByName("alguien"));
     const blob = serializeAll(res);
     expect(blob).not.toContain("contact_id");
     expect(blob).not.toContain("chat_id");
@@ -987,7 +1094,7 @@ describe("contrato de privacidad: ninguna Reply ni Effect filtra contacto", () =
   it("los resultados mostrados nunca incluyen contact_id aunque el adaptador lo cuele", () => {
     // Aunque un resultado trajera contacto, la vista publica ya lo excluye; aqui
     // verificamos que la maquina solo renderiza los campos publicos esperados.
-    const queried = run(initialState, [text(BUTTON.buscar), text("alguien")]);
+    const queried = run(initialState, searchByName("alguien"));
     const withResults = step(queried.state, {
       kind: "effect_result",
       result: {

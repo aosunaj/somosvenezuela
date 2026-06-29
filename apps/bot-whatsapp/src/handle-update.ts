@@ -263,7 +263,13 @@ async function executeEffect(
     case "search_persons": {
       try {
         // Pasamos el canal para vincular al buscador (lo notificaremos si hay match).
-        const results = await backend.searchPersons(effect.query, effect.zona, channel);
+        // `zona` y `descripcion` son los campos estructurados que el matcher pondera.
+        const results = await backend.searchPersons(
+          effect.query,
+          effect.zona,
+          channel,
+          effect.descripcion,
+        );
         return { type: "search_persons", results };
       } catch {
         // La maquina no modela "busqueda fallida"; lo gestiona el adaptador (null).

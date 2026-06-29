@@ -242,6 +242,7 @@ export class HttpBackendClient implements BackendClient {
     query: string,
     zona?: string,
     channel?: ChannelIdentity,
+    descripcion?: string,
   ): Promise<readonly PublicPersonResult[]> {
     const body: Record<string, unknown> = {
       tipo: "persona",
@@ -249,6 +250,11 @@ export class HttpBackendClient implements BackendClient {
     };
     if (zona !== undefined && zona.length > 0) {
       body["zona"] = zona;
+    }
+    // Las senas viajan como `target_descripcion`: el backend las usa en la query de
+    // matching (campo ponderado) para un parecido mas afinado.
+    if (descripcion !== undefined && descripcion.length > 0) {
+      body["target_descripcion"] = descripcion;
     }
     // Pasamos el canal para que el backend vincule al buscador y pueda
     // notificarle despues si aparece una coincidencia (Capa 2: reunir familias).

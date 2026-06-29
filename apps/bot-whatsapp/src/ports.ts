@@ -134,6 +134,7 @@ export interface BackendClient {
     query: string,
     zona?: string,
     channel?: ChannelIdentity,
+    descripcion?: string,
   ): Promise<readonly PublicPersonResult[]>;
   searchPets(
     query: string,
