@@ -69,3 +69,30 @@ services:
       # El MISMO SERVICE_TOKEN que el backend, o el poller no entrega notificaciones.
       - key: SERVICE_TOKEN
         sync: false
+
+  # ── Bot de Telegram (long polling; sin webhook ni URL publica) ──────────────
+  # Corre como web service por el plan gratuito (workers son de pago). Abre un
+  # puerto de health solo para satisfacer el binding; el dialogo va por long polling.
+  # NOTA: el plan free duerme tras ~15 min sin trafico HTTP entrante y eso PARA el
+  # polling. Para mantenerlo despierto, apuntar un pinger externo gratuito
+  # (p. ej. UptimeRobot) a la URL del servicio cada 5 min.
+  - type: web
+    name: somosvenezuela-bot-telegram
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: pnpm install --frozen-lockfile && pnpm -r build
+    startCommand: pnpm --filter bot-telegram start
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Token del bot de BotFather. Secreto.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      # URL publica del backend (https://somosvenezuela-backend.onrender.com).
+      - key: BACKEND_URL
+        sync: false
+      # El MISMO SERVICE_TOKEN que el backend, para que el poller entregue notificaciones.
+      - key: SERVICE_TOKEN
+        sync: false

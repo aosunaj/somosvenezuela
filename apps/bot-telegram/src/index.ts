@@ -1,4 +1,5 @@
 import process from "node:process";
+import { createServer } from "node:http";
 import { z } from "zod";
 import { loadDotenvIfPresent } from "./load-dotenv.js";
 import { HttpTelegramTransport } from "./http-telegram-transport.js";
@@ -119,11 +120,35 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ── Servidor de health (binding de puerto para hosts web) ─────────────────────
+
+/**
+ * El bot es long polling y NO necesita HTTP entrante. Pero los hosts de tipo "web
+ * service" (p. ej. el plan gratuito de Render) exigen que el proceso abra un puerto
+ * o marcan el deploy como fallido. Levantamos un servidor minimo que responde 200
+ * en cualquier ruta para satisfacer ese binding; el long polling corre en paralelo.
+ * Si no hay PORT (ejecucion local), usamos 3002 por defecto.
+ */
+function startHealthServer(): void {
+  const raw = process.env["PORT"];
+  const port = raw !== undefined && Number.isInteger(Number(raw)) ? Number(raw) : 3002;
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`[bot-telegram] Health server escuchando en el puerto ${port}.`);
+  });
+}
+
 // ── Arranque ─────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   loadDotenvIfPresent();
   const env = loadEnv();
+
+  // Abrimos el puerto de health ANTES del long polling para que el host lo detecte.
+  startHealthServer();
 
   const transport = new HttpTelegramTransport(env.telegramBotToken);
   const deps: UpdateDeps = {
