@@ -4,7 +4,8 @@ import { createPersonRepo } from "../src/repos/person.js";
 
 // Test de markFound (rescatado por el dueno) con un fake DbClient PROPIO.
 // Verifica que el UPDATE fija estado='encontrada_viva' y verificacion='sin_verificar'
-// (NUNCA 'verificada', guardrail #4) sobre la persona correcta. Datos SINTETICOS.
+// (NUNCA 'verificada', guardrail #4) sobre la persona correcta, registra updated_at
+// y exige que el UPDATE afecte una fila (TOCTOU). Datos SINTETICOS.
 
 const PERSON_ID = "a0000000-0000-4000-8000-000000000001";
 
@@ -17,13 +18,25 @@ interface Captured {
   filters: Array<{ column: string; value: unknown }>;
 }
 
+interface FakeClientOptions {
+  /** Error a devolver por la cadena (null = sin error). */
+  readonly error?: { message: string; code?: string } | null;
+  /** Filas afectadas que devuelve .select() tras el update (camino feliz: 1 fila). */
+  readonly rows?: unknown[];
+}
+
 /**
  * Fake DbClient parametrizable: captura el update y el filtro de markFound. La
- * cadena fluida es thenable para resolver `update().eq()` sin BD real.
+ * cadena fluida es thenable para resolver `update().eq().select()` sin BD real.
+ * `rows` simula las filas afectadas que devuelve PostgREST con .select().
  */
-function makeFakeClient(captured: Captured, error: { message: string; code?: string } | null = null): DbClient {
+function makeFakeClient(captured: Captured, options: FakeClientOptions = {}): DbClient {
+  const error = options.error ?? null;
+  // Por defecto, una fila afectada (camino feliz). Tests de cero filas pasan rows: [].
+  const rows = options.rows ?? [{ id: PERSON_ID }];
+
   const makeBuilder = (): Record<string, unknown> => {
-    const result = { data: null, error };
+    const result = { data: rows, error };
     const builder: Record<string, unknown> = {
       select: () => builder,
       update: (values: Record<string, unknown>) => {
@@ -53,7 +66,7 @@ function makeCaptured(): Captured {
 }
 
 describe("personRepo.markFound (rescatado por el dueno)", () => {
-  it("actualiza persons fijando encontrada_viva + sin_verificar para la persona dada", async () => {
+  it("actualiza persons fijando encontrada_viva + sin_verificar y registra updated_at", async () => {
     const captured = makeCaptured();
     const repo = createPersonRepo(makeFakeClient(captured));
 
@@ -62,9 +75,12 @@ describe("personRepo.markFound (rescatado por el dueno)", () => {
     // Escribe en la tabla base persons (no en la vista publica).
     expect(captured.fromRelations).toContain("persons");
     // El UPDATE fija exactamente el estado de rescatado, SIN verificar.
-    expect(captured.updates).toEqual([
-      { estado: "encontrada_viva", verificacion: "sin_verificar" },
-    ]);
+    const update = captured.updates[0];
+    expect(update?.["estado"]).toBe("encontrada_viva");
+    expect(update?.["verificacion"]).toBe("sin_verificar");
+    // Deja rastro de CUANDO se marco (guardrail #8): updated_at ISO presente.
+    expect(typeof update?.["updated_at"]).toBe("string");
+    expect(update?.["updated_at"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     // Aplica el filtro por id de la persona correcta.
     expect(captured.filters).toEqual([{ column: "id", value: PERSON_ID }]);
   });
@@ -78,9 +94,18 @@ describe("personRepo.markFound (rescatado por el dueno)", () => {
     expect(captured.updates[0]?.["verificacion"]).not.toBe("verificada");
   });
 
+  it("lanza DbError si el UPDATE no afecta ninguna fila (persona borrada, TOCTOU)", async () => {
+    const captured = makeCaptured();
+    const repo = createPersonRepo(makeFakeClient(captured, { rows: [] }));
+
+    await expect(repo.markFound(PERSON_ID)).rejects.toThrow();
+  });
+
   it("propaga un DbError si el UPDATE falla", async () => {
     const captured = makeCaptured();
-    const repo = createPersonRepo(makeFakeClient(captured, { message: "fallo sintetico", code: "X" }));
+    const repo = createPersonRepo(
+      makeFakeClient(captured, { error: { message: "fallo sintetico", code: "X" } }),
+    );
 
     await expect(repo.markFound(PERSON_ID)).rejects.toThrow();
   });

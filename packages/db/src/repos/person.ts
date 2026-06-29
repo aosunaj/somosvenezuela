@@ -148,13 +148,25 @@ export function createPersonRepo(client: DbClient): PersonRepo {
       // Reporte del dueno: encontrada con vida, SIN verificar. Nunca 'verificada'
       // (guardrail #4): un reporte del dueno sugiere, no confirma. No viola la
       // constraint fallecida_requiere_verificacion porque no marcamos 'fallecida'.
-      const update: Pick<PersonRow, "estado" | "verificacion"> = {
+      // Registramos 'updated_at' para dejar rastro de CUANDO se marco (guardrail #8).
+      const update: Pick<PersonRow, "estado" | "verificacion" | "updated_at"> = {
         estado: "encontrada_viva",
         verificacion: DEFAULT_VERIFICACION,
+        updated_at: new Date().toISOString(),
       };
-      const { error } = await client.from("persons").update(update).eq("id", id);
+      // .select('id') nos devuelve las filas afectadas: si no matchea ninguna (la
+      // persona se borro entre la autorizacion y el update, TOCTOU), data viene
+      // vacio y NO debemos responder un 200 falso: lanzamos un DbError controlado.
+      const { data, error } = await client
+        .from("persons")
+        .update(update)
+        .eq("id", id)
+        .select("id");
       if (error) {
         throw new DbError(`No se pudo marcar la persona como encontrada: ${error.message}`, error.code);
+      }
+      if (data === null || (Array.isArray(data) && data.length === 0)) {
+        throw new DbError("Persona no encontrada al marcar como encontrada.");
       }
     },
   };
