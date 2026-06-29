@@ -21,6 +21,7 @@ import { registerDeleteSecureRoutes } from "./routes/delete-secure.js";
 import { registerMarkFoundSecureRoutes } from "./routes/mark-found-secure.js";
 import { registerNotificationsRoutes } from "./routes/notifications.js";
 import { registerMatchRoutes } from "./routes/matches.js";
+import { registerReunionRoutes } from "./routes/reunion.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerSearchesRoutes } from "./routes/searches.js";
 
@@ -121,6 +122,13 @@ export async function buildApp(
     matchRepo: deps.matchRepo,
     notificationRepo: deps.notificationRepo,
     serviceToken: deps.serviceToken,
+  });
+  // Reencuentro con consentimiento bilateral (Capa 2: reunir familias). El contacto
+  // SOLO se comparte tras el doble «si»; el caso de menor no se conecta automaticamente.
+  registerReunionRoutes(app, {
+    channelLinkRepo: deps.channelLinkRepo,
+    matchRepo: deps.matchRepo,
+    notificationRepo: deps.notificationRepo,
   });
 
   return app;
