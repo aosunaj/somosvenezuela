@@ -520,6 +520,8 @@ describe("flujo buscar", () => {
     const txt = joinReplies(withResults);
     expect(txt).toContain("Persona Sintetica");
     expect(txt).toContain("desaparecida");
+    // Presentacion honesta: posible coincidencia + parecido ponderado (no certeza).
+    expect(txt).toContain("posible coincidencia");
     expect(txt).toContain("91%");
   });
 
@@ -579,6 +581,8 @@ describe("flujo buscar mascota", () => {
     const txt = joinReplies(withResults);
     expect(txt).toContain("Firulais");
     expect(txt).toContain("perro");
+    // Presentacion honesta: posible coincidencia + parecido ponderado (no certeza).
+    expect(txt).toContain("posible coincidencia");
     expect(txt).toContain("88%");
   });
 

@@ -228,8 +228,12 @@ export function searchResults(
   const lines = results.map((r, i) => {
     const apellidos = r.apellidos ? ` ${r.apellidos}` : "";
     const zona = r.zona ? `, zona: ${r.zona}` : "";
+    // Honestidad: mostramos un PARECIDO, nunca una certeza (guardrail #4). El bot
+    // sugiere "posible coincidencia"; quien busca decide.
     const score =
-      typeof r.score === "number" ? `, similitud: ${Math.round(r.score * 100)}%` : "";
+      typeof r.score === "number"
+        ? ` · posible coincidencia · parecido: ${Math.round(r.score * 100)}%`
+        : "";
     return (
       `${i + 1}. ${r.nombre}${apellidos}${zona}\n` +
       `   Estado: ${r.estado} · Fuente: ${r.fuente} · Verificacion: ${r.verificacion}${score}`
@@ -268,8 +272,11 @@ export function searchPetResults(
     const tipo = r.tipo ? `, tipo: ${r.tipo}` : "";
     const raza = r.raza ? `, raza: ${r.raza}` : "";
     const zona = r.zona ? `, zona: ${r.zona}` : "";
+    // Honestidad: mostramos un PARECIDO, nunca una certeza (guardrail #4).
     const score =
-      typeof r.score === "number" ? `, similitud: ${Math.round(r.score * 100)}%` : "";
+      typeof r.score === "number"
+        ? ` · posible coincidencia · parecido: ${Math.round(r.score * 100)}%`
+        : "";
     return (
       `${i + 1}. ${nombre}${tipo}${raza}${zona}\n` +
       `   Estado: ${r.estado} · Fuente: ${r.fuente} · Verificacion: ${r.verificacion}${score}`
