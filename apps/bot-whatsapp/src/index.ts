@@ -142,8 +142,14 @@ async function handlePost(
   const rawBody = await readRawBody(req);
   const signature = headerValue(req, "x-hub-signature-256");
 
+  // Diagnostico temporal (sin PII): confirma que el POST del webhook llega al bot.
+  console.log("[bot-whatsapp] webhook POST recibido.");
+
   if (!verifySignature(rawBody, signature, env.appSecret)) {
     // Origen no verificado: no procesamos nada. No revelamos el motivo exacto.
+    console.error(
+      "[bot-whatsapp] Firma del webhook invalida: revisa WHATSAPP_APP_SECRET (debe ser el App Secret de Meta).",
+    );
     res.writeHead(401, { "content-type": "text/plain" });
     res.end("Unauthorized");
     return;
@@ -160,6 +166,8 @@ async function handlePost(
     return;
   }
 
+  // Diagnostico temporal (sin PII): firma OK, delegamos a la maquina de conversacion.
+  console.log("[bot-whatsapp] webhook con firma valida; procesando.");
   await handleUpdate(payload, deps);
   res.writeHead(200, { "content-type": "text/plain" });
   res.end("OK");
