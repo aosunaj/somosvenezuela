@@ -84,6 +84,9 @@ export class NotOwnerError extends Error {
  *   (POST /pets con `channel`), para que la mascota quede vinculada al usuario.
  * - `deleteByChannel` borra un registro solo si el canal que lo pide es su dueno
  *   (DELETE /persons/:id/by-channel); el backend autoriza, el adaptador no decide.
+ * - `markFoundByChannel` marca un registro como encontrado con vida solo si el canal
+ *   que lo pide es su dueno (POST /persons/:id/found-by-channel); el backend autoriza.
+ *   Reutiliza `NotOwnerError` (403) igual que el borrado.
  * - `searchPersons`/`searchPets` devuelven la vista publica (sin contacto) con score.
  * - `listZones`/`listNeeds` son LECTURA PUBLICA del mapa (GET): puntos de encuentro y
  *   necesidades por zona. Sin contacto ni PII; el bot solo las muestra (paridad web).
@@ -101,6 +104,7 @@ export interface BackendClient {
     channel: ChannelIdentity,
   ): Promise<{ readonly id: string }>;
   deleteByChannel(personId: string, channel: ChannelIdentity): Promise<void>;
+  markFoundByChannel(personId: string, channel: ChannelIdentity): Promise<void>;
   searchPersons(
     query: string,
     zona?: string,

@@ -51,6 +51,13 @@ export interface PersonRepo {
   searchPersonsPublic(query: string, zona?: string): Promise<PublicPersonResult[]>;
   /** BORRADO (derecho al olvido). Elimina la persona de la tabla base por id. */
   remove(id: string): Promise<void>;
+  /**
+   * RESCATADO (reporte del dueno). Marca la persona como encontrada con vida:
+   * estado='encontrada_viva', verificacion='sin_verificar'. NUNCA fija 'verificada':
+   * un reporte del dueno SUGIERE, no confirma (guardrail #4 / proteccion de menores).
+   * La confirmacion oficial por entidad verificada es un paso aparte fuera de alcance.
+   */
+  markFound(id: string): Promise<void>;
 }
 
 /** Construye el repositorio de personas sobre un cliente Supabase de servicio. */
@@ -135,6 +142,20 @@ export function createPersonRepo(client: DbClient): PersonRepo {
     async remove(id: string): Promise<void> {
       const { error } = await client.from("persons").delete().eq("id", id);
       if (error) throw new DbError(`No se pudo borrar la persona: ${error.message}`, error.code);
+    },
+
+    async markFound(id: string): Promise<void> {
+      // Reporte del dueno: encontrada con vida, SIN verificar. Nunca 'verificada'
+      // (guardrail #4): un reporte del dueno sugiere, no confirma. No viola la
+      // constraint fallecida_requiere_verificacion porque no marcamos 'fallecida'.
+      const update: Pick<PersonRow, "estado" | "verificacion"> = {
+        estado: "encontrada_viva",
+        verificacion: DEFAULT_VERIFICACION,
+      };
+      const { error } = await client.from("persons").update(update).eq("id", id);
+      if (error) {
+        throw new DbError(`No se pudo marcar la persona como encontrada: ${error.message}`, error.code);
+      }
     },
   };
 }

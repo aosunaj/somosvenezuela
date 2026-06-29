@@ -70,6 +70,9 @@ function makeFakePersonRepo(calls: Calls): PersonRepo {
     async remove() {
       /* no-op */
     },
+    async markFound() {
+      /* no-op */
+    },
   };
 }
 

@@ -148,11 +148,18 @@ describe("menu / idle", () => {
     ["/buscar_mascota", "search_pets"],
     ["/registrar_mascota", "register_pet"],
     ["/borrar", "delete"],
+    ["/rescatado", "mark_found"],
+    ["/rescatada", "mark_found"],
     ["/zonas", "browse_zones"],
     ["/necesidades", "browse_needs"],
   ])("el comando %s inicia el flujo %s (alias BotFather)", (command, flow) => {
     const res = step(initialState, cmd(command));
     expect(res.state.flow).toBe(flow);
+  });
+
+  it("el texto del boton 'Marcar como encontrada' inicia el flujo rescatado", () => {
+    const res = step(initialState, text(BUTTON.rescatado));
+    expect(res.state.flow).toBe("mark_found");
   });
 });
 
@@ -745,6 +752,65 @@ describe("flujo borrar", () => {
     const res = step(started.state, text("no-es-un-uuid"));
     expect((res.state as Extract<ConversationState, { flow: "delete" }>).step).toBe("id");
     expect(res.effect).toBeUndefined();
+  });
+});
+
+// ── Flujo rescatado (el dueno marca como encontrado con vida) ─────────────────
+
+describe("flujo rescatado", () => {
+  it("id valido -> confirma -> emite mark_found -> ok", () => {
+    const started = step(initialState, text(BUTTON.rescatado));
+    expect(started.state.flow).toBe("mark_found");
+
+    const withId = step(started.state, text(SYNTH_PERSON_ID));
+    expect((withId.state as Extract<ConversationState, { flow: "mark_found" }>).step).toBe(
+      "confirm",
+    );
+    expect(joinReplies(withId)).toContain(SYNTH_PERSON_ID);
+
+    const confirmed = step(withId.state, text(BUTTON.confirmar));
+    expect(confirmed.replies).toHaveLength(0);
+    const effect = confirmed.effect as Extract<Effect, { type: "mark_found" }>;
+    expect(effect.type).toBe("mark_found");
+    expect(effect.personId).toBe(SYNTH_PERSON_ID);
+
+    const done = step(confirmed.state, {
+      kind: "effect_result",
+      result: { type: "mark_found", ok: true },
+    });
+    expect(done.state).toEqual({ flow: "idle" });
+    expect(joinReplies(done)).toContain("encontrado");
+  });
+
+  it("ante un fallo (incluido 'no es el dueno') vuelve a pedir el id con mensaje amable", () => {
+    const started = step(initialState, text(BUTTON.rescatado));
+    const withId = step(started.state, text(SYNTH_PERSON_ID));
+    const confirmed = step(withId.state, text(BUTTON.confirmar));
+
+    const failed = step(confirmed.state, {
+      kind: "effect_result",
+      result: { type: "mark_found", ok: false },
+    });
+    expect((failed.state as Extract<ConversationState, { flow: "mark_found" }>).step).toBe("id");
+    // No revela la causa (no confirma existencia ni pertenencia a un tercero).
+    const out = joinReplies(failed);
+    expect(out).not.toContain("403");
+    expect(out).not.toContain("dueno");
+  });
+
+  it("id con formato invalido re-pide sin avanzar", () => {
+    const started = step(initialState, text(BUTTON.rescatado));
+    const res = step(started.state, text("no-es-un-uuid"));
+    expect((res.state as Extract<ConversationState, { flow: "mark_found" }>).step).toBe("id");
+    expect(res.effect).toBeUndefined();
+  });
+
+  it("cancela en la confirmacion sin emitir mark_found", () => {
+    const started = step(initialState, text(BUTTON.rescatado));
+    const withId = step(started.state, text(SYNTH_PERSON_ID));
+    const cancelled = step(withId.state, text(BUTTON.cancelar));
+    expect(cancelled.state).toEqual({ flow: "idle" });
+    expect(cancelled.effect).toBeUndefined();
   });
 });
 

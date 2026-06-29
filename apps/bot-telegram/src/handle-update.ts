@@ -232,6 +232,18 @@ async function executeEffect(
         return { type: "delete_person", ok: false };
       }
     }
+    case "mark_found": {
+      try {
+        // El backend autoriza con el vinculo del canal (solo el dueno puede marcar).
+        await backend.markFoundByChannel(effect.personId, channel);
+        return { type: "mark_found", ok: true };
+      } catch {
+        // 403 (no es el dueno) y cualquier otro fallo se modelan IGUAL como ok:false:
+        // la maquina muestra MARK_FOUND_FAILED sin revelar si el registro existe ni
+        // de quien es (guardrail #1: no confirmar pertenencia a un tercero).
+        return { type: "mark_found", ok: false };
+      }
+    }
   }
 }
 

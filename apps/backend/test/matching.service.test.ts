@@ -57,6 +57,9 @@ function fakePersonRepo(
     async remove() {
       /* no-op */
     },
+    async markFound() {
+      /* no-op */
+    },
   };
 }
 
