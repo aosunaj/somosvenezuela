@@ -570,20 +570,60 @@ type SearchState = Extract<ConversationState, { flow: "search" }>;
 
 function stepSearch(state: SearchState, input: FlowInput): StepResult {
   if (input.kind === "effect_result") {
-    if (state.step !== "searching" || input.result.type !== "search_persons") {
-      return result({ flow: "search", step: "query" }, [reply(M.SEARCH_ASK_QUERY)]);
+    // Resultado de la BUSQUEDA: muestra coincidencias y ofrece conectar (reencuentro).
+    if (state.step === "searching" && input.result.type === "search_persons") {
+      const { results } = input.result;
+      if (results.length === 0) {
+        // Sin coincidencias: volvemos a idle con el menu.
+        return result(initialState, [reply(M.SEARCH_NO_RESULTS), reply(M.WELCOME, M.menuButtons())]);
+      }
+      // Con coincidencias: pasamos a 'choosing' guardando los ids PUBLICOS en orden.
+      // El buscador podra elegir UNO por su numero para iniciar el reencuentro.
+      const candidates = results.map((r) => r.id);
+      return result(
+        { flow: "search", step: "choosing", candidates },
+        [reply(M.searchResults(results)), reply(M.searchConnectPrompt(results.length))],
+      );
     }
-    const { results } = input.result;
-    const text = results.length === 0 ? M.SEARCH_NO_RESULTS : M.searchResults(results);
-    // Tras mostrar resultados volvemos a idle con el menu.
-    return result(initialState, [reply(text), reply(M.WELCOME, M.menuButtons())]);
+    // Resultado de la SOLICITUD de reencuentro: mensaje calido segun el estado.
+    if (state.step === "requesting" && input.result.type === "request_reunion") {
+      const message =
+        input.result.status === "requested"
+          ? M.REUNION_REQUESTED
+          : input.result.status === "minor"
+            ? M.REUNION_MINOR_BLOCKED
+            : M.REUNION_REQUEST_FAILED;
+      return result(initialState, [reply(message), reply(M.WELCOME, M.menuButtons())]);
+    }
+    // Resultado inesperado para el paso actual: reofrecemos la pregunta de busqueda.
+    return result({ flow: "search", step: "query" }, [reply(M.SEARCH_ASK_QUERY)]);
   }
 
   // input.kind === 'text'
-  if (state.step === "searching") {
-    // Esperando resultados; ignoramos texto.
+  if (state.step === "searching" || state.step === "requesting") {
+    // Esperando un resultado del adaptador; ignoramos texto.
     return result(state, []);
   }
+
+  if (state.step === "choosing") {
+    // El buscador elige a quien conectar por su NUMERO de la lista. Cualquier entrada
+    // que no sea un numero valido lo devuelve amablemente al menu (no insiste).
+    const candidates = state.candidates ?? [];
+    const personId = pickCandidate(input.text, candidates);
+    if (personId === null) {
+      // No es un numero de la lista: volvemos al inicio sin conectar.
+      return toMenu(M.CANCELLED);
+    }
+    // Emite el efecto de reencuentro; el adaptador anade el canal del buscador y el
+    // backend pide el consentimiento de la otra parte. Sin contacto aqui (guardrail #1).
+    return result(
+      { flow: "search", step: "requesting", candidates },
+      [],
+      { type: "request_reunion", personId },
+    );
+  }
+
+  // state.step === 'query'
   const query = input.text.trim();
   if (query.length === 0) {
     return result({ flow: "search", step: "query" }, [reply(M.SEARCH_INVALID_QUERY)]);
@@ -595,6 +635,20 @@ function stepSearch(state: SearchState, input: FlowInput): StepResult {
     [],
     { type: "search_persons", query },
   );
+}
+
+/**
+ * Resuelve el id de la persona elegida a partir del texto del buscador y la lista de
+ * candidatos. Acepta un numero 1..N (1-indexado, como se muestra). Devuelve el id, o
+ * null si el texto no es un numero valido dentro del rango.
+ */
+function pickCandidate(text: string, candidates: readonly string[]): string | null {
+  const trimmed = text.trim();
+  // Solo digitos: evita que Number(" 2 cosas ") cuele.
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n < 1 || n > candidates.length) return null;
+  return candidates[n - 1] ?? null;
 }
 
 // ── Flujo: buscar mascota ─────────────────────────────────────────────────────

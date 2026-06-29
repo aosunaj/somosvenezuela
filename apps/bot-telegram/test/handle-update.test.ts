@@ -10,6 +10,7 @@ import {
   publicPetFixture,
   publicZoneFixture,
   SYNTH_CONTACT_ID,
+  SYNTH_PERSON_ID,
   textUpdate,
 } from "./fakes.js";
 
@@ -517,6 +518,131 @@ describe("rescatado seguro por canal (el dueno marca como encontrado con vida)",
 
     expect(backend.markFoundCalls).toHaveLength(1);
     expect(transport.allText()).toContain("No pudimos marcar el registro");
+  });
+});
+
+describe("reencuentro: el buscador elige a quien conectar", () => {
+  it("tras buscar, elegir el numero llama a requestReunion con el id y el canal (sin contacto)", async () => {
+    const backend = new FakeBackend({
+      searchResults: [publicPersonFixture({ nombre: "Jose Sintetico", score: 0.9 })],
+      reunionRequestStatus: "requested",
+    });
+    const { deps, transport } = makeDeps(backend);
+
+    // Busca, ve resultados, y elige el 1 para conectar.
+    await send(deps, CHAT, BUTTON.buscar, "Jose", "1");
+
+    // Llamo a requestReunion con el id publico de la persona elegida y el canal.
+    expect(backend.requestReunionCalls).toHaveLength(1);
+    expect(backend.requestReunionCalls[0]?.personId).toBe(SYNTH_PERSON_ID);
+    expect(backend.requestReunionCalls[0]?.channel).toEqual({
+      plataforma: "telegram",
+      chatId: String(CHAT),
+    });
+    // Confirmacion calida al buscador; NUNCA aparece contacto de la otra parte.
+    const conversation = transport.allText();
+    expect(conversation).toContain("permiso");
+    expect(conversation).not.toContain("telefono");
+    expect(conversation).not.toContain("contact_id");
+  });
+
+  it("status 'minor' muestra el aviso de proteccion de menores (guardrail #2)", async () => {
+    const backend = new FakeBackend({
+      searchResults: [publicPersonFixture({ nombre: "Menor Sintetico" })],
+      reunionRequestStatus: "minor",
+    });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, CHAT, BUTTON.buscar, "Menor", "1");
+
+    expect(backend.requestReunionCalls).toHaveLength(1);
+    expect(transport.allText().toLowerCase()).toContain("entidad verificada");
+  });
+
+  it("si requestReunion lanza, responde 'failed' sin crashear ni filtrar el error", async () => {
+    const backend = new FakeBackend({
+      searchResults: [publicPersonFixture({ nombre: "Jose Sintetico" })],
+      failRequestReunion: true,
+    });
+    const { deps, transport } = makeDeps(backend);
+
+    await expect(send(deps, CHAT, BUTTON.buscar, "Jose", "1")).resolves.toBeUndefined();
+
+    expect(backend.requestReunionCalls).toHaveLength(1);
+    const conversation = transport.allText();
+    expect(conversation).toContain("No pudimos iniciar la conexion");
+    expect(conversation).not.toContain("sintetico");
+  });
+
+  it("elegir un numero fuera de rango vuelve al menu SIN llamar a requestReunion", async () => {
+    const backend = new FakeBackend({
+      searchResults: [publicPersonFixture({ nombre: "Jose Sintetico" })],
+    });
+    const { deps, sessions } = makeDeps(backend);
+
+    await send(deps, CHAT, BUTTON.buscar, "Jose", "9");
+
+    expect(backend.requestReunionCalls).toHaveLength(0);
+    expect(sessions.get(CHAT)).toEqual({ flow: "idle" });
+  });
+});
+
+describe("reencuentro: el registrante responde por comando global", () => {
+  it("/conectar va directo al backend con el canal (sin pasar por la sesion)", async () => {
+    const backend = new FakeBackend({ reunionConsentStatus: "accepted_waiting" });
+    const { deps, transport, sessions } = makeDeps(backend);
+
+    await send(deps, CHAT, "/conectar");
+
+    expect(backend.reunionConsentCalls).toHaveLength(1);
+    expect(backend.reunionConsentCalls[0]?.decision).toBe("aceptado");
+    expect(backend.reunionConsentCalls[0]?.channel).toEqual({
+      plataforma: "telegram",
+      chatId: String(CHAT),
+    });
+    // No deja estado de sesion (es un comando global, fuera de la maquina).
+    expect(sessions.get(CHAT)).toBeUndefined();
+    expect(transport.allText()).toContain("Gracias");
+  });
+
+  it("/conectar con doble si (exchanged) avisa que llega el contacto en un momento", async () => {
+    const backend = new FakeBackend({ reunionConsentStatus: "exchanged" });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, CHAT, "/conectar");
+
+    expect(backend.reunionConsentCalls[0]?.decision).toBe("aceptado");
+    expect(transport.allText()).toContain("te enviaremos el contacto");
+  });
+
+  it("/rechazar manda decision 'rechazado' y confirma que no se comparte el contacto", async () => {
+    const backend = new FakeBackend({ reunionConsentStatus: "rejected" });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, CHAT, "/rechazar");
+
+    expect(backend.reunionConsentCalls).toHaveLength(1);
+    expect(backend.reunionConsentCalls[0]?.decision).toBe("rechazado");
+    expect(transport.allText()).toContain("No compartiremos tu contacto");
+  });
+
+  it("/conectar sin solicitud pendiente (not_found) responde el mensaje neutro", async () => {
+    const backend = new FakeBackend({ reunionConsentStatus: "not_found" });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, CHAT, "/conectar");
+
+    expect(transport.allText()).toContain("ninguna solicitud de conexion pendiente");
+  });
+
+  it("si reunionConsent lanza, responde un mensaje generico sin crashear", async () => {
+    const backend = new FakeBackend({ failReunionConsent: true });
+    const { deps, transport } = makeDeps(backend);
+
+    await expect(send(deps, CHAT, "/conectar")).resolves.toBeUndefined();
+
+    expect(backend.reunionConsentCalls).toHaveLength(1);
+    expect(transport.allText()).toContain("No pudimos registrar tu respuesta");
   });
 });
 

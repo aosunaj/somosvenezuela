@@ -5,6 +5,9 @@ import {
   type ChannelIdentity,
   type PublicPersonResult,
   type PublicPetResult,
+  type ReunionConsentStatus,
+  type ReunionDecision,
+  type ReunionRequestStatus,
   type TelegramTransport,
 } from "../src/ports.js";
 
@@ -82,6 +85,16 @@ export interface SearchCall {
   readonly channel?: ChannelIdentity;
 }
 
+export interface RequestReunionCall {
+  readonly personId: string;
+  readonly channel: ChannelIdentity;
+}
+
+export interface ReunionConsentCall {
+  readonly decision: ReunionDecision;
+  readonly channel: ChannelIdentity;
+}
+
 interface FakeBackendOptions {
   /** Resultados que devolvera `searchPersons`. */
   readonly searchResults?: readonly PublicPersonResult[];
@@ -109,6 +122,14 @@ interface FakeBackendOptions {
   readonly markFoundNotOwner?: boolean;
   /** Si true, `markFoundByChannel` lanza un error generico (fallo transitorio). */
   readonly failMarkFound?: boolean;
+  /** Estado que devuelve `requestReunion` (por defecto 'requested'). */
+  readonly reunionRequestStatus?: ReunionRequestStatus;
+  /** Estado que devuelve `reunionConsent` (por defecto 'accepted_waiting'). */
+  readonly reunionConsentStatus?: ReunionConsentStatus;
+  /** Si true, `requestReunion` lanza (para probar el fallback 'failed'). */
+  readonly failRequestReunion?: boolean;
+  /** Si true, `reunionConsent` lanza (para probar el mensaje generico). */
+  readonly failReunionConsent?: boolean;
   /** Id que devuelve `createPerson`/`registerPerson` cuando no falla. */
   readonly createdId?: string;
 }
@@ -121,6 +142,8 @@ export class FakeBackend implements BackendClient {
   readonly markFoundCalls: MarkFoundCall[] = [];
   readonly searchCalls: SearchCall[] = [];
   readonly petSearchCalls: SearchCall[] = [];
+  readonly requestReunionCalls: RequestReunionCall[] = [];
+  readonly reunionConsentCalls: ReunionConsentCall[] = [];
   /** Cuenta cuantas veces se llamo a cada lectura de mapa (sin argumentos). */
   listZonesCalls = 0;
   listNeedsCalls = 0;
@@ -201,6 +224,28 @@ export class FakeBackend implements BackendClient {
       throw new Error("backend caido (sintetico)");
     }
     return this.#opts.petResults ?? [];
+  }
+
+  async requestReunion(
+    personId: string,
+    channel: ChannelIdentity,
+  ): Promise<ReunionRequestStatus> {
+    this.requestReunionCalls.push({ personId, channel });
+    if (this.#opts.failRequestReunion === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+    return this.#opts.reunionRequestStatus ?? "requested";
+  }
+
+  async reunionConsent(
+    decision: ReunionDecision,
+    channel: ChannelIdentity,
+  ): Promise<ReunionConsentStatus> {
+    this.reunionConsentCalls.push({ decision, channel });
+    if (this.#opts.failReunionConsent === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+    return this.#opts.reunionConsentStatus ?? "accepted_waiting";
   }
 
   async listZones(): Promise<readonly PublicZone[]> {

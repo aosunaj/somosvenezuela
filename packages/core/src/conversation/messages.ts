@@ -242,6 +242,49 @@ export function searchResults(
   return [header, ...lines].join("\n");
 }
 
+/**
+ * Invitacion a CONECTAR tras mostrar resultados de personas. El buscador puede
+ * elegir UNA persona por su numero para iniciar el reencuentro; su consentimiento es
+ * sincrono (esta aqui). Si no quiere, cualquier otra cosa lo devuelve al menu. No
+ * expone dato de contacto alguno (guardrail #1).
+ */
+export function searchConnectPrompt(count: number): string {
+  return (
+    "Si reconoces a alguien y quieres que les ayudemos a reunirse, escribe su numero " +
+    `(del 1 al ${count}) y le avisaremos a quien lo registro para pedirle permiso. ` +
+    "Nadie comparte su contacto sin el si de ambas partes.\n" +
+    "Si prefieres no conectar ahora, escribe cualquier otra cosa para volver al inicio."
+  );
+}
+
+export const REUNION_REQUEST_INVALID =
+  "No entendi el numero. Escribe el numero de la persona con la que quieres conectar, " +
+  "o cualquier otra cosa para volver al inicio.";
+
+/**
+ * Confirmacion al buscador tras pedir el reencuentro. AUN no se comparte contacto:
+ * avisamos a la otra parte y esperamos su respuesta. Mensaje calido y honesto.
+ */
+export const REUNION_REQUESTED =
+  "Listo. Le avisamos a quien registro a esa persona y le pedimos permiso para conectarlos. " +
+  "Si acepta, te pondremos en contacto. Gracias por confiar en SomosVenezuela: nadie se queda atras.";
+
+/**
+ * Respuesta cuando la persona elegida es MENOR (guardrail #2 antitrata). No se conecta
+ * de forma automatica: este caso lo gestiona una entidad verificada. Tono cuidadoso.
+ */
+export const REUNION_MINOR_BLOCKED =
+  "Para proteger a los menores de edad, este caso no se conecta de forma automatica. " +
+  "Una entidad verificada se encargara de acompañar el reencuentro de forma segura. " +
+  "Gracias por tu comprension.";
+
+/**
+ * Fallo generico al iniciar el reencuentro. No revela si el registro existe ni de
+ * quien es (guardrail #1): un mensaje neutro y amable.
+ */
+export const REUNION_REQUEST_FAILED =
+  "No pudimos iniciar la conexion ahora mismo. Por favor, intentalo de nuevo en un momento.";
+
 // ── Busqueda de mascotas ─────────────────────────────────────────────────────
 
 export const SEARCH_PET_ASK_QUERY =

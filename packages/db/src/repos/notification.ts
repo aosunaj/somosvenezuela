@@ -152,9 +152,20 @@ export function createNotificationRepo(client: DbClient): NotificationRepo {
     },
 
     async markSent(id: string): Promise<void> {
+      // Al marcar enviada, REDACTAMOS el payload (payload=null). Algunos avisos del
+      // reencuentro llevan el telefono de la otra parte en el texto (unico punto de
+      // intercambio tras el doble si); una vez entregado, NO debe quedar retenido en
+      // reposo en la cola ni devolverse de nuevo por GET /notifications/pending
+      // (guardrail #1: minimo dato de contacto, nada de retencion innecesaria). Para
+      // las demas notificaciones el payload ya se entrego, asi que borrarlo no afecta.
+      //
+      // FOLLOW-UP: lo ideal a futuro es NO persistir nunca el telefono en la cola:
+      // guardar un payload estructurado { match_id, tipo:'intercambio' } y que el bot
+      // pida el telefono a un endpoint efimero autenticado por canal al entregar. Ese
+      // endpoint efimero queda FUERA de alcance de este cambio (solo scrub + comentario).
       const { error } = await client
         .from("notifications")
-        .update({ estado: "enviada" })
+        .update({ estado: "enviada", payload: null })
         .eq("id", id);
       if (error) throw new DbError(`No se pudo marcar enviada: ${error.message}`, error.code);
     },

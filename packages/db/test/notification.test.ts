@@ -152,6 +152,10 @@ describe("notificationRepo: ciclo create -> listPending -> markSent", () => {
 
     await repo.markSent(created.id);
     expect(store[0]?.estado).toBe("enviada");
+    // PRIVACIDAD (guardrail #1): al marcar enviada se REDACTA el payload (payload=null)
+    // para no retener en reposo el contacto que algunos avisos del reencuentro llevan.
+    expect(store[0]?.payload).toBeNull();
+    expect(capture.updates.at(-1)?.values).toEqual({ estado: "enviada", payload: null });
 
     // Tras enviar, ya no aparece en pendientes.
     const afterSent = await repo.listPending();

@@ -12,6 +12,7 @@ import { whatsappWebhookSchema } from "./whatsapp-types.js";
 import type {
   BackendClient,
   ChannelIdentity,
+  ReunionConsentStatus,
   SessionStore,
   WhatsAppTransport,
 } from "./ports.js";
@@ -52,6 +53,28 @@ const COMMANDS: Record<string, string> = {
   "/cancel": "/cancelar",
 };
 
+// REENCUENTRO — comandos GLOBALES del REGISTRANTE. Responden a una notificacion PUSH
+// ("alguien busca a quien registraste; /conectar o /rechazar"). Se manejan FUERA de la
+// maquina de conversacion: la notificacion es push y la sesion del bot es in-memory por
+// usuario, asi que NO hay un estado de sesion que correlacione. El backend correlaciona
+// la solicitud pendiente por la PROPIEDAD del canal (plataforma + wa_id). Por eso estos
+// comandos no pasan por `step`: van directos al backend con el canal.
+const REUNION_ACCEPT_COMMANDS: ReadonlySet<string> = new Set(["/conectar", "/aceptar"]);
+const REUNION_REJECT_COMMANDS: ReadonlySet<string> = new Set(["/rechazar", "/rechazo"]);
+
+// Mensajes de cara al usuario para la respuesta del registrante (espanol calido).
+const REUNION_ACCEPT_REQUESTED =
+  "Gracias. Si la otra parte tambien acepta, les pondremos en contacto para reunirse. " +
+  "Nadie comparte su contacto sin el si de ambos.";
+const REUNION_ACCEPT_EXCHANGED =
+  "Gracias. Ambas partes aceptaron: te enviaremos el contacto en un momento para que se reunan.";
+const REUNION_REJECTED =
+  "Entendido. No compartiremos tu contacto. Gracias por avisarnos.";
+const REUNION_NOTHING_PENDING =
+  "No tienes ninguna solicitud de conexion pendiente ahora mismo. Si necesitas algo mas, escribe /ayuda.";
+const REUNION_CONSENT_FAILED =
+  "No pudimos registrar tu respuesta ahora mismo. Por favor, intentalo de nuevo en un momento.";
+
 /**
  * Procesa un payload crudo del webhook de WhatsApp de principio a fin. No lanza ante
  * payloads raros (los ignora) ni ante fallos del backend (responde un mensaje amable).
@@ -71,10 +94,57 @@ export async function handleUpdate(rawUpdate: unknown, deps: UpdateDeps): Promis
         // Mensajes sin texto (foto, audio, ubicacion, interactivos...) no se procesan
         // en este slice. `from` es el wa_id del remitente.
         if (text === undefined) continue;
+        // REENCUENTRO: /conectar | /rechazar del REGISTRANTE se atienden ANTES de la
+        // maquina (comandos globales, sin estado de sesion). Si lo manejamos, seguimos.
+        if (await handleReunionConsent(message.from, text, deps)) continue;
         const input = toInput(text);
         await runConversation(message.from, input, deps);
       }
     }
+  }
+}
+
+/**
+ * Atiende los comandos GLOBALES de reencuentro del registrante (/conectar | /rechazar).
+ * Devuelve `true` si el texto era uno de esos comandos (y ya se respondio), o `false`
+ * si no lo era (para que siga el flujo normal de la maquina).
+ *
+ * No usa la sesion: el backend correlaciona la solicitud pendiente por la PROPIEDAD del
+ * canal. El contacto, si ambos aceptan, llega despues por notificacion (nunca aqui).
+ */
+async function handleReunionConsent(
+  waId: string,
+  content: string,
+  deps: UpdateDeps,
+): Promise<boolean> {
+  const verb = content.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  const isAccept = REUNION_ACCEPT_COMMANDS.has(verb);
+  const isReject = REUNION_REJECT_COMMANDS.has(verb);
+  if (!isAccept && !isReject) return false;
+
+  const channel: ChannelIdentity = { plataforma: PLATAFORMA, chatId: waId };
+  const decision = isAccept ? "aceptado" : "rechazado";
+  try {
+    const status = await deps.backend.reunionConsent(decision, channel);
+    await deps.transport.sendMessage(waId, reunionConsentMessage(status));
+  } catch {
+    // Fallo del backend: mensaje generico, sin filtrar detalles internos (guardrail #1/#6).
+    await deps.transport.sendMessage(waId, REUNION_CONSENT_FAILED);
+  }
+  return true;
+}
+
+/** Traduce el estado del consentimiento del registrante a un mensaje calido. */
+function reunionConsentMessage(status: ReunionConsentStatus): string {
+  switch (status) {
+    case "exchanged":
+      return REUNION_ACCEPT_EXCHANGED;
+    case "accepted_waiting":
+      return REUNION_ACCEPT_REQUESTED;
+    case "rejected":
+      return REUNION_REJECTED;
+    case "not_found":
+      return REUNION_NOTHING_PENDING;
   }
 }
 
@@ -248,6 +318,19 @@ async function executeEffect(
         // la maquina muestra MARK_FOUND_FAILED sin revelar si el registro existe ni
         // de quien es (guardrail #1: no confirmar pertenencia a un tercero).
         return { type: "mark_found", ok: false };
+      }
+    }
+    case "request_reunion": {
+      try {
+        // El BUSCADOR inicia el reencuentro con la persona elegida. El backend pide el
+        // consentimiento de la otra parte; NO se comparte contacto. Pasamos el canal
+        // para que el backend correlacione al buscador por su propiedad del canal.
+        const status = await backend.requestReunion(effect.personId, channel);
+        return { type: "request_reunion", status };
+      } catch {
+        // Cualquier fallo se modela como 'failed': mensaje generico, sin revelar si el
+        // registro existe ni de quien es (guardrail #1).
+        return { type: "request_reunion", status: "failed" };
       }
     }
   }

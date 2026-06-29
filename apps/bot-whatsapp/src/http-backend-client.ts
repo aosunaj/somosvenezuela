@@ -7,6 +7,9 @@ import {
   type ChannelIdentity,
   type PublicPersonResult,
   type PublicPetResult,
+  type ReunionConsentStatus,
+  type ReunionDecision,
+  type ReunionRequestStatus,
 } from "./ports.js";
 
 // Implementacion real del cliente del backend (spec 01) via fetch.
@@ -57,6 +60,16 @@ const zonesResponseSchema = z.object({
 /** Respuesta de GET /needs: listado publico de necesidades por zona (mapa). */
 const needsResponseSchema = z.object({
   needs: z.array(publicNeedSchema),
+});
+
+/** Respuesta de POST /reunion/request: el estado de la solicitud (sin contacto). */
+const reunionRequestResponseSchema = z.object({
+  status: z.enum(["requested", "minor", "failed"]),
+});
+
+/** Respuesta de POST /reunion/consent: el estado del consentimiento (sin contacto). */
+const reunionConsentResponseSchema = z.object({
+  status: z.enum(["not_found", "rejected", "exchanged", "accepted_waiting"]),
 });
 
 export class HttpBackendClient implements BackendClient {
@@ -180,6 +193,49 @@ export class HttpBackendClient implements BackendClient {
         `POST /persons/:id/found-by-channel fallo con estado ${res.status}`,
       );
     }
+  }
+
+  async requestReunion(
+    personId: string,
+    channel: ChannelIdentity,
+  ): Promise<ReunionRequestStatus> {
+    const res = await fetch(`${this.#baseUrl}/reunion/request`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // El backend correlaciona al buscador por la propiedad del canal; no enviamos
+      // contact_id. La persona elegida va por su id publico (no es PII de contacto).
+      body: JSON.stringify({
+        channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        personId,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`POST /reunion/request fallo con estado ${res.status}`);
+    }
+    const json: unknown = await res.json();
+    return reunionRequestResponseSchema.parse(json).status;
+  }
+
+  async reunionConsent(
+    decision: ReunionDecision,
+    channel: ChannelIdentity,
+  ): Promise<ReunionConsentStatus> {
+    const res = await fetch(`${this.#baseUrl}/reunion/consent`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // El backend correlaciona la solicitud pendiente por la propiedad del canal del
+      // registrante; no enviamos contact_id. El contacto, si ambos aceptan, llega
+      // despues por notificacion, nunca en esta respuesta (guardrail #1).
+      body: JSON.stringify({
+        channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        decision,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`POST /reunion/consent fallo con estado ${res.status}`);
+    }
+    const json: unknown = await res.json();
+    return reunionConsentResponseSchema.parse(json).status;
   }
 
   async searchPersons(
