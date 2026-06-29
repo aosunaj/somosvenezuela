@@ -10,6 +10,7 @@ export {
   skipButtons,
   searchResults,
   searchPetResults,
+  searchConnectPrompt,
   registerSummary,
   registerDone,
   petSummary,

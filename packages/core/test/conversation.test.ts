@@ -499,7 +499,7 @@ describe("validacion de entrada (re-pide, no avanza, no crashea)", () => {
 // ── Flujo buscar ─────────────────────────────────────────────────────────────
 
 describe("flujo buscar", () => {
-  it("query -> emite search_persons -> resultados", () => {
+  it("query -> emite search_persons -> resultados -> ofrece conectar (choosing)", () => {
     const started = step(initialState, text(BUTTON.buscar));
     expect(started.state.flow).toBe("search");
 
@@ -516,14 +516,23 @@ describe("flujo buscar", () => {
         results: [synthPublicPerson({ score: 0.91 })],
       },
     });
-    expect(withResults.state).toEqual({ flow: "idle" });
+    // Con resultados pasamos a 'choosing' para ofrecer conectar (reencuentro).
+    const state = withResults.state as Extract<ConversationState, { flow: "search" }>;
+    expect(state.flow).toBe("search");
+    expect(state.step).toBe("choosing");
+    expect(state.candidates).toEqual([SYNTH_PERSON_ID]);
     const txt = joinReplies(withResults);
     expect(txt).toContain("Persona Sintetica");
     expect(txt).toContain("desaparecida");
     expect(txt).toContain("91%");
+    // El prompt de conexion invita a elegir un numero, sin exponer contacto.
+    expect(txt.toLowerCase()).toContain("numero");
+    // El estado/efecto NO transporta dato de contacto (guardrail #1).
+    expect(serializeAll(withResults)).not.toContain("contact_id");
+    expect(serializeAll(withResults)).not.toContain("telefono");
   });
 
-  it("cero resultados muestra mensaje claro y vuelve a idle", () => {
+  it("cero resultados muestra mensaje claro y vuelve a idle (sin conectar)", () => {
     const queried = run(initialState, [text(BUTTON.buscar), text("nadie")]);
     const empty = step(queried.state, {
       kind: "effect_result",
@@ -538,6 +547,99 @@ describe("flujo buscar", () => {
     const res = step(started.state, text("   "));
     expect(res.effect).toBeUndefined();
     expect(res.state.flow).toBe("search");
+  });
+});
+
+// ── Flujo reencuentro: el buscador elige a quien conectar ─────────────────────
+
+describe("flujo reencuentro (buscador elige)", () => {
+  /** Lleva la conversacion hasta el paso 'choosing' con un resultado. */
+  function untilChoosing(): StepResult {
+    const queried = run(initialState, [text(BUTTON.buscar), text("Maria")]);
+    return step(queried.state, {
+      kind: "effect_result",
+      result: { type: "search_persons", results: [synthPublicPerson({ score: 0.9 })] },
+    });
+  }
+
+  it("elegir un numero valido emite request_reunion con el id publico (sin contacto)", () => {
+    const choosing = untilChoosing();
+    const chosen = step(choosing.state, text("1"));
+    const effect = chosen.effect as Extract<Effect, { type: "request_reunion" }>;
+    expect(effect?.type).toBe("request_reunion");
+    expect(effect.personId).toBe(SYNTH_PERSON_ID);
+    expect((chosen.state as Extract<ConversationState, { flow: "search" }>).step).toBe(
+      "requesting",
+    );
+    // El efecto NO transporta dato de contacto (guardrail #1).
+    expect(serializeAll(chosen)).not.toContain("contact");
+    expect(serializeAll(chosen)).not.toContain("telefono");
+  });
+
+  it("numero fuera de rango vuelve al menu SIN emitir request_reunion", () => {
+    const choosing = untilChoosing();
+    const out = step(choosing.state, text("5"));
+    expect(out.effect).toBeUndefined();
+    expect(out.state).toEqual({ flow: "idle" });
+  });
+
+  it("texto no numerico vuelve al menu sin conectar (no insiste)", () => {
+    const choosing = untilChoosing();
+    const out = step(choosing.state, text("no gracias"));
+    expect(out.effect).toBeUndefined();
+    expect(out.state).toEqual({ flow: "idle" });
+  });
+
+  it("resultado 'requested' muestra confirmacion calida y vuelve al menu", () => {
+    const choosing = untilChoosing();
+    const requesting = step(choosing.state, text("1"));
+    const done = step(requesting.state, {
+      kind: "effect_result",
+      result: { type: "request_reunion", status: "requested" },
+    });
+    expect(done.state).toEqual({ flow: "idle" });
+    const txt = joinReplies(done).toLowerCase();
+    expect(txt).toContain("permiso");
+    expect(serializeAll(done)).not.toContain("telefono");
+  });
+
+  it("resultado 'minor' muestra el aviso de proteccion de menores (guardrail #2)", () => {
+    const choosing = untilChoosing();
+    const requesting = step(choosing.state, text("1"));
+    const done = step(requesting.state, {
+      kind: "effect_result",
+      result: { type: "request_reunion", status: "minor" },
+    });
+    expect(done.state).toEqual({ flow: "idle" });
+    const txt = joinReplies(done).toLowerCase();
+    expect(txt).toContain("entidad verificada");
+  });
+
+  it("resultado 'failed' muestra un mensaje generico sin revelar nada", () => {
+    const choosing = untilChoosing();
+    const requesting = step(choosing.state, text("1"));
+    const done = step(requesting.state, {
+      kind: "effect_result",
+      result: { type: "request_reunion", status: "failed" },
+    });
+    expect(done.state).toEqual({ flow: "idle" });
+    expect(joinReplies(done).toLowerCase()).toContain("no pudimos");
+  });
+
+  it("texto mientras espera el resultado (requesting) se ignora sin responder", () => {
+    const choosing = untilChoosing();
+    const requesting = step(choosing.state, text("1"));
+    const ignored = step(requesting.state, text("hola?"));
+    expect(ignored.replies).toHaveLength(0);
+    expect((ignored.state as Extract<ConversationState, { flow: "search" }>).step).toBe(
+      "requesting",
+    );
+  });
+
+  it("/cancelar en 'choosing' vuelve al menu (comando global)", () => {
+    const choosing = untilChoosing();
+    const cancelled = step(choosing.state, cmd("/cancelar"));
+    expect(cancelled.state).toEqual({ flow: "idle" });
   });
 });
 

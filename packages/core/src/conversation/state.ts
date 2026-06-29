@@ -42,6 +42,11 @@ export type Effect =
   // verificacion=sin_verificar (un reporte del dueno SUGIERE, no confirma; la
   // confirmacion oficial por entidad verificada es un paso aparte).
   | { readonly type: "mark_found"; readonly personId: string }
+  // REENCUENTRO (Capa 2): tras una busqueda, el BUSCADOR elige UNA persona de los
+  // resultados para iniciar el reencuentro. Su consentimiento es SINCRONO (esta en
+  // conversacion). El adaptador anade su canal; el backend pide el consentimiento de
+  // la otra parte. NO transporta contacto: solo el id publico de la persona elegida.
+  | { readonly type: "request_reunion"; readonly personId: string }
   // Vistas de SOLO LECTURA del mapa: no llevan query ni dato alguno; el adaptador
   // hace un GET publico al backend (paridad bot<->web). Sin contacto ni PII.
   | { readonly type: "list_zones" }
@@ -99,6 +104,20 @@ export type MarkFoundResult =
   | { readonly type: "mark_found"; readonly ok: false };
 
 /**
+ * Resultado de `request_reunion`. Discrimina por `status` para que la maquina de un
+ * mensaje cálido y adecuado SIN exponer contacto alguno (el intercambio real ocurre
+ * despues, asincronamente, por notificacion tras el doble si):
+ *   - 'requested' : se aviso a la otra parte y se espera su respuesta.
+ *   - 'minor'     : la persona es menor; requiere entidad verificada (guardrail #2).
+ *   - 'failed'    : no se pudo iniciar (no encontrada o error). Mensaje generico, sin
+ *                   revelar si el registro existe ni de quien es (guardrail #1).
+ */
+export type RequestReunionResult =
+  | { readonly type: "request_reunion"; readonly status: "requested" }
+  | { readonly type: "request_reunion"; readonly status: "minor" }
+  | { readonly type: "request_reunion"; readonly status: "failed" };
+
+/**
  * Resultado de `list_zones`: las zonas publicas (puntos de encuentro) del mapa.
  * Vista publica `PublicZone` (sin contacto ni identidad interna, guardrail #1).
  */
@@ -124,6 +143,7 @@ export type EffectResult =
   | SearchPetsResult
   | DeletePersonResult
   | MarkFoundResult
+  | RequestReunionResult
   | ListZonesResult
   | ListNeedsResult;
 
@@ -190,8 +210,11 @@ export type ConversationState =
     }
   | {
       readonly flow: "search";
-      readonly step: "query" | "searching";
+      readonly step: "query" | "searching" | "choosing" | "requesting";
       readonly query?: string;
+      // En 'choosing'/'requesting': ids PUBLICOS de las personas mostradas, en el orden
+      // en que se listaron. El buscador elige por su numero; el id NO es PII (guardrail #1).
+      readonly candidates?: readonly string[];
     }
   | {
       readonly flow: "search_pets";
