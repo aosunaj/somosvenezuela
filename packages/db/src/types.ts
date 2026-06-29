@@ -117,9 +117,31 @@ export type MatchMetodo = "exacto" | "trigram" | "ia";
 export type MatchEstadoRevision = "propuesto" | "confirmado" | "descartado";
 
 /**
- * Fila completa de la tabla base `matches` (migrations/0001). Una coincidencia
+ * Estado de consentimiento de UNA parte (buscador o registrante) en un reencuentro.
+ * Espeja el CHECK de migrations/0006. Ciclo: sin_solicitar -> solicitado ->
+ * aceptado | rechazado.
+ */
+export type ConsentimientoEstado =
+  | "sin_solicitar"
+  | "solicitado"
+  | "aceptado"
+  | "rechazado";
+
+/**
+ * Estado del reencuentro a nivel de match. Espeja el CHECK de migrations/0006.
+ * El intercambio de contacto SOLO ocurre en 'intercambiado' (doble aceptado).
+ */
+export type ReunionEstado =
+  | "inactiva"
+  | "pendiente"
+  | "intercambiado"
+  | "rechazada";
+
+/**
+ * Fila completa de la tabla base `matches` (migrations/0001 + 0006). Una coincidencia
  * PROPUESTA por el motor entre una busqueda y una persona/mascota, para REVISION
- * HUMANA. No contiene PII: solo ids internos, score y estado de revision.
+ * HUMANA, mas el consentimiento BILATERAL de reencuentro (0006). No contiene PII:
+ * solo ids internos, score, estado de revision y los estados de consentimiento.
  */
 export interface MatchRow {
   id: string;
@@ -132,6 +154,12 @@ export interface MatchRow {
   estado_revision: MatchEstadoRevision;
   /** Identificador libre del revisor humano (sin PII). */
   revisado_por: string | null;
+  /** Consentimiento de quien busca (0006). Por defecto 'sin_solicitar'. */
+  consentimiento_buscador: ConsentimientoEstado;
+  /** Consentimiento de quien registro a la persona (0006). Por defecto 'sin_solicitar'. */
+  consentimiento_registrante: ConsentimientoEstado;
+  /** Estado del reencuentro (0006). Por defecto 'inactiva'. */
+  reunion_estado: ReunionEstado;
   created_at: string;
 }
 

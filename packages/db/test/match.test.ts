@@ -125,6 +125,10 @@ function makeFakeClient(
           // El DEFAULT del esquema fija 'propuesto'; el fake lo refleja.
           estado_revision: "propuesto",
           revisado_por: null,
+          // DEFAULTS de reencuentro (migrations/0006): el match nace sin reencuentro.
+          consentimiento_buscador: "sin_solicitar",
+          consentimiento_registrante: "sin_solicitar",
+          reunion_estado: "inactiva",
           created_at: "2026-01-01T00:00:00.000Z",
         };
         return Promise.resolve({ data: row, error: null });
@@ -156,6 +160,9 @@ const baseMatchRow: MatchRow = {
   metodo: "trigram",
   estado_revision: "propuesto",
   revisado_por: null,
+  consentimiento_buscador: "sin_solicitar",
+  consentimiento_registrante: "sin_solicitar",
+  reunion_estado: "inactiva",
   created_at: "2026-01-01T00:00:00.000Z",
 };
 
