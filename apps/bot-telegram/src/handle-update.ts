@@ -42,6 +42,13 @@ export interface UpdateDeps {
 const SEARCH_FAILED =
   "No pudimos completar la busqueda ahora mismo. Por favor, intentalo de nuevo en un momento.";
 
+// Guia cuando llega contenido SIN texto utilizable (foto sola, sticker, ubicacion...).
+// No lo descartamos en silencio: dejariamos a la persona colgada sin respuesta. Las
+// fotos aun no se guardan; pedimos la descripcion en texto para poder continuar.
+const NO_TEXT_CONTENT =
+  "Por ahora solo puedo leer mensajes de texto. Si querias enviar una foto, escribe la " +
+  "descripcion en un mensaje y seguimos. (Pronto podras adjuntar fotos.)";
+
 /** Comandos universales que la maquina entiende, normalizados por el adaptador. */
 const COMMANDS: Record<string, string> = {
   "/start": "/start",
@@ -56,7 +63,7 @@ const COMMANDS: Record<string, string> = {
  * raros (los ignora) ni ante fallos del backend (responde un mensaje amable).
  */
 export async function handleUpdate(rawUpdate: unknown, deps: UpdateDeps): Promise<void> {
-  // 1) Sanear: cualquier cosa que no sea un mensaje de texto de un chat se ignora.
+  // 1) Sanear: lo que no sea un mensaje de un chat se ignora con seguridad.
   const parsed = telegramUpdateSchema.safeParse(rawUpdate);
   if (!parsed.success) return;
 
@@ -64,11 +71,17 @@ export async function handleUpdate(rawUpdate: unknown, deps: UpdateDeps): Promis
   if (message === undefined) return;
 
   const chatId = message.chat.id;
-  const text = message.text;
-  // Updates sin texto (foto, sticker, ubicacion...) no se procesan en este slice.
-  if (text === undefined) return;
+  // Telegram pone el texto al pie de una foto en `caption`, no en `text`. Tomamos lo
+  // primero disponible para no perder lo que la persona escribio al mandar una foto.
+  const content = message.text ?? message.caption;
+  if (content === undefined) {
+    // Contenido sin texto (foto sola, sticker, ubicacion...): guiamos en vez de
+    // descartar en silencio, para no dejar a la persona colgada sin respuesta.
+    await deps.transport.sendMessage(chatId, NO_TEXT_CONTENT);
+    return;
+  }
 
-  const input = toInput(text);
+  const input = toInput(content);
   await runConversation(chatId, input, deps);
 }
 

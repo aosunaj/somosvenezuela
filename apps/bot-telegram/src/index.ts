@@ -49,7 +49,15 @@ const envSchema = z.object({
   // Secreto del webhook: viaja en el header X-Telegram-Bot-Api-Secret-Token de cada
   // POST y lo validamos. OPCIONAL pero MUY recomendado (sin el, cualquiera que adivine
   // la URL podria inyectar updates falsos). Nunca se imprime.
-  WEBHOOK_SECRET: z.string().min(1).optional(),
+  // FORMATO: Telegram exige que el `secret_token` cumpla ^[A-Za-z0-9_-]{1,256}$; con
+  // cualquier otro caracter (espacio, +, /, =, etc.) `setWebhook` devuelve 400. Lo
+  // validamos aqui para fallar claro en el arranque, no a ciegas contra la API.
+  WEBHOOK_SECRET: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[A-Za-z0-9_-]+$/, "solo admite A-Za-z0-9_- (requisito de secret_token de Telegram)")
+    .optional(),
 });
 
 interface Env {
@@ -65,12 +73,12 @@ interface Env {
 function loadEnv(): Env {
   const parsed = envSchema.safeParse(process.env);
   if (!parsed.success) {
-    // Solo listamos QUE variable falla, jamas su valor.
-    const faltantes = parsed.error.issues
-      .map((issue) => issue.path.join("."))
-      .join(", ");
+    // Solo listamos QUE variable falla y POR QUE (el mensaje de zod), jamas su valor.
+    const problemas = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "(raiz)"}: ${issue.message}`)
+      .join("; ");
     console.error(
-      `[bot-telegram] Configuracion invalida. Revisa estas variables de entorno: ${faltantes}`,
+      `[bot-telegram] Configuracion invalida. Revisa estas variables de entorno: ${problemas}`,
     );
     process.exit(1);
   }
@@ -136,8 +144,18 @@ async function configureWebhook(
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    // No incluimos el cuerpo (podria reflejar la URL con token).
-    throw new Error(`setWebhook fallo con estado ${res.status}`);
+    // Telegram responde { ok:false, error_code, description }. El `description` NO
+    // contiene el bot token (ese viaja en la ruta /bot<token>/..., nunca en el cuerpo),
+    // asi que es seguro mostrarlo: nos dice el motivo real (p. ej. "secret_token
+    // contains unallowed characters") en vez de un 400 mudo.
+    let detalle = "";
+    try {
+      const data = (await res.json()) as { description?: unknown };
+      if (typeof data.description === "string") detalle = `: ${data.description}`;
+    } catch {
+      // Cuerpo no-JSON: nos quedamos con el estado a secas.
+    }
+    throw new Error(`setWebhook fallo con estado ${res.status}${detalle}`);
   }
 }
 
