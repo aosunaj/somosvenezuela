@@ -1,5 +1,19 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { WebSocket as WsWebSocket } from "ws";
 import { loadDbEnv } from "./env.js";
+
+// supabase-js inicializa SIEMPRE su cliente realtime al crear el cliente, y este
+// exige un WebSocket. El backend es una API REST y NUNCA usa realtime, pero la
+// construccion fallaria en runtimes sin WebSocket global nativo (Node < 22).
+// Polyfill defensivo: si no hay WebSocket global, lo proveemos con `ws`. En Node
+// 22+ (que ya trae WebSocket nativo) esto es un no-op. Asi el arranque no depende
+// de la version de Node del host de despliegue.
+{
+  const globalWithWs = globalThis as { WebSocket?: unknown };
+  if (typeof globalWithWs.WebSocket === "undefined") {
+    globalWithWs.WebSocket = WsWebSocket;
+  }
+}
 
 // Cliente Supabase con la clave service_role (BYPASSRLS).
 // CRITICO: este cliente SALTA RLS, por lo que SOLO debe vivir en el backend.
