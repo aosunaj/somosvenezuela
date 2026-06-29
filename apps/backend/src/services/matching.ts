@@ -49,8 +49,9 @@ export interface RunMatchingResult {
  * @param searchId  id de la busqueda recien creada.
  * @param query     nombre/zona/descripcion buscados (sin datos de contacto).
  *
- * No corre si el nombre buscado esta vacio (no hay con que puntuar). Es seguro de
- * llamar en best-effort: el llamador puede ignorar el resultado.
+ * No corre si la query no trae NINGUN criterio (nombre, zona o descripcion): no
+ * hay con que recuperar ni puntuar. Es seguro de llamar en best-effort: el
+ * llamador puede ignorar el resultado.
  */
 export async function runMatchingForSearch(
   deps: MatchingDeps,
@@ -61,12 +62,21 @@ export async function runMatchingForSearch(
   const threshold = options.threshold ?? MATCH_THRESHOLD;
   const topN = options.topN ?? MATCH_TOP_N;
 
-  const nombre = query.nombre.trim();
-  if (nombre.length === 0) return { created: 0 };
+  // Termino de RECUPERACION del pool: el primer criterio textual disponible
+  // (nombre > descripcion). La zona se reenvia siempre como filtro del RPC.
+  // Sin ningun criterio no hay nada que buscar.
+  const nombre = query.nombre?.trim() ?? "";
+  const descripcion = query.descripcion?.trim() ?? "";
+  const zona = query.zona?.trim() ?? "";
+  const tieneCriterio = nombre.length > 0 || descripcion.length > 0 || zona.length > 0;
+  if (!tieneCriterio) return { created: 0 };
 
   // 1) Candidatos: busqueda difusa publica (trgm) -> SOLO persons_public (sin
-  //    menores, sin contact_id). La zona, si viene, acota el pool.
-  const candidates = await deps.personRepo.searchPersonsPublic(nombre, query.zona);
+  //    menores, sin contact_id). Sin nombre usamos la descripcion como termino
+  //    libre; la zona, si viene, acota el pool via zona_filtro. Con q vacio y
+  //    solo zona, el RPC recupera por el filtro de zona.
+  const termino = nombre.length > 0 ? nombre : descripcion;
+  const candidates = await deps.personRepo.searchPersonsPublic(termino, query.zona);
   if (candidates.length === 0) return { created: 0 };
 
   // 2) Re-ranking determinista local (sin AiScorer): la IA SUGIERE con score.

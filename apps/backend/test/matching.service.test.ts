@@ -109,6 +109,61 @@ describe("runMatchingForSearch", () => {
     expect(created).toHaveLength(0);
   });
 
+  it("no corre si la query no trae NINGUN criterio (nombre/zona/descripcion vacios)", async () => {
+    const created: MatchCreate[] = [];
+    const captured: Array<{ query: string; zona?: string }> = [];
+    const result = await runMatchingForSearch(
+      { personRepo: fakePersonRepo([], captured), matchRepo: fakeMatchRepo(created) },
+      SEARCH_ID,
+      { nombre: "  ", zona: "", descripcion: "   " },
+    );
+    expect(result.created).toBe(0);
+    expect(captured).toHaveLength(0);
+  });
+
+  it("corre SOLO con zona: recupera el pool con q vacio y la zona como filtro", async () => {
+    const created: MatchCreate[] = [];
+    const captured: Array<{ query: string; zona?: string }> = [];
+    // Candidato cuya zona coincide plenamente: re-rankea alto pese a no haber nombre.
+    const pool = [publicPerson("a1", "Pedro Lopez", "La Guaira")];
+
+    const result = await runMatchingForSearch(
+      { personRepo: fakePersonRepo(pool, captured), matchRepo: fakeMatchRepo(created) },
+      SEARCH_ID,
+      { zona: "La Guaira" },
+    );
+
+    // Sin nombre, el termino libre del RPC es "" y la zona viaja como filtro.
+    expect(captured[0]).toEqual({ query: "", zona: "La Guaira" });
+    expect(result.created).toBe(1);
+    expect(created[0]?.person_id).toBe("a1");
+    // Zona plena, unico campo provisto -> score 1, metodo no 'exacto' (sin nombre).
+    expect(created[0]?.score).toBe(1);
+    expect(created[0]?.metodo).not.toBe("exacto");
+  });
+
+  it("corre SOLO con descripcion: usa las senas como termino libre del RPC", async () => {
+    const created: MatchCreate[] = [];
+    const captured: Array<{ query: string; zona?: string }> = [];
+    const pool = [
+      {
+        ...publicPerson("a1", "Persona", null),
+        descripcion: "camisa roja y gorra azul",
+      },
+    ];
+
+    const result = await runMatchingForSearch(
+      { personRepo: fakePersonRepo(pool, captured), matchRepo: fakeMatchRepo(created) },
+      SEARCH_ID,
+      { descripcion: "camisa roja y gorra azul" },
+    );
+
+    // El termino libre es la descripcion (no hay nombre); sin zona, no se filtra.
+    expect(captured[0]).toEqual({ query: "camisa roja y gorra azul" });
+    expect(result.created).toBe(1);
+    expect(created[0]?.person_id).toBe("a1");
+  });
+
   it("persiste como match el candidato que coincide exactamente (score=1, 'propuesto')", async () => {
     const created: MatchCreate[] = [];
     const captured: Array<{ query: string; zona?: string }> = [];

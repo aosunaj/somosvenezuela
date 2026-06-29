@@ -95,17 +95,26 @@ export function registerSearchesRoutes(app: FastifyInstance, deps: AppDeps): voi
         buscador_contact_id: buscadorContactId,
       });
 
-      // Dispara el matching SOLO para busquedas de persona con nombre objetivo.
-      // Best-effort: el matching propone matches 'propuesto'; NO notifica a nadie.
-      const targetNombre = busqueda.target_nombre ?? "";
-      const esBusquedaPersona =
-        busqueda.tipo === "persona" && targetNombre.trim().length > 0;
+      // Dispara el matching para busquedas de persona con CUALQUIER criterio
+      // (nombre, zona o descripcion): en emergencia, "quien hay registrado en
+      // La Guaira" es un caso real y util. Best-effort: el matching propone
+      // matches 'propuesto'; NO notifica a nadie.
+      const targetNombre = busqueda.target_nombre?.trim() ?? "";
+      const targetZona = busqueda.zona?.trim() ?? "";
+      const targetDescripcion = busqueda.target_descripcion?.trim() ?? "";
+      const tieneCriterio =
+        targetNombre.length > 0 ||
+        targetZona.length > 0 ||
+        targetDescripcion.length > 0;
+      const esBusquedaPersona = busqueda.tipo === "persona" && tieneCriterio;
 
       // Query de matching reutilizada por el cerebro (matches de fondo) y por el
       // re-ranking de los resultados instantaneos: misma definicion, un solo sitio.
+      // Se incluye SOLO el subconjunto de campos realmente provisto, para que el
+      // score se normalice sobre ellos (un campo ausente ni penaliza ni aporta).
       const matchQuery: MatchQuery | null = esBusquedaPersona
         ? {
-            nombre: targetNombre,
+            ...(busqueda.target_nombre !== null ? { nombre: busqueda.target_nombre } : {}),
             ...(busqueda.zona !== null ? { zona: busqueda.zona } : {}),
             ...(busqueda.target_descripcion !== null
               ? { descripcion: busqueda.target_descripcion }
@@ -129,8 +138,12 @@ export function registerSearchesRoutes(app: FastifyInstance, deps: AppDeps): voi
       // usuario ve un parecido HONESTO, nunca certeza por un acierto parcial.
       let results: Array<z.infer<typeof searchResultSchema>> = [];
       if (matchQuery !== null) {
+        // Termino libre del RPC: nombre si lo hay, si no la descripcion. La zona
+        // viaja siempre como filtro. Con q vacio y solo zona, el RPC recupera por
+        // el filtro de zona (no exige nombre).
+        const termino = matchQuery.nombre ?? matchQuery.descripcion ?? "";
         const candidates = await deps.personRepo.searchPersonsPublic(
-          matchQuery.nombre,
+          termino,
           matchQuery.zona,
         );
         const ranked = await rankCandidates(matchQuery, candidates);
