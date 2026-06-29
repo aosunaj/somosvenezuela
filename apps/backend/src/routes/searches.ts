@@ -5,6 +5,7 @@ import {
   searchCreateSchema,
   searchSchema,
 } from "core";
+import { rankCandidates, type MatchQuery } from "ai";
 import { runMatchingForSearch } from "../services/matching.js";
 import type { AppDeps } from "../deps.js";
 import type { FastifyInstance } from "fastify";
@@ -97,30 +98,45 @@ export function registerSearchesRoutes(app: FastifyInstance, deps: AppDeps): voi
       // Dispara el matching SOLO para busquedas de persona con nombre objetivo.
       // Best-effort: el matching propone matches 'propuesto'; NO notifica a nadie.
       const targetNombre = busqueda.target_nombre ?? "";
-      if (busqueda.tipo === "persona" && targetNombre.trim().length > 0) {
-        await runMatchingForSearch(
-          { personRepo: deps.personRepo, matchRepo: deps.matchRepo },
-          busqueda.id,
-          {
+      const esBusquedaPersona =
+        busqueda.tipo === "persona" && targetNombre.trim().length > 0;
+
+      // Query de matching reutilizada por el cerebro (matches de fondo) y por el
+      // re-ranking de los resultados instantaneos: misma definicion, un solo sitio.
+      const matchQuery: MatchQuery | null = esBusquedaPersona
+        ? {
             nombre: targetNombre,
             ...(busqueda.zona !== null ? { zona: busqueda.zona } : {}),
             ...(busqueda.target_descripcion !== null
               ? { descripcion: busqueda.target_descripcion }
               : {}),
-          },
+          }
+        : null;
+
+      if (matchQuery !== null) {
+        await runMatchingForSearch(
+          { personRepo: deps.personRepo, matchRepo: deps.matchRepo },
+          busqueda.id,
+          matchQuery,
         );
       }
 
-      // Resultados instantaneos para quien busca: misma busqueda difusa publica
-      // (vista persons_public: sin menores ni contact_id) que se muestra AHORA.
-      // Es mas amplia que los matches estrictos del cerebro (umbral 0.45).
+      // Resultados instantaneos para quien busca. El RPC publico (searchPersonsPublic)
+      // se usa SOLO para RECUPERAR el conjunto de candidatos (su WHERE difuso trgm +
+      // indices, sin menores ni contact_id); su `score` es el maximo de UN campo y
+      // miente cuando solo coincide el nombre de pila. Por eso re-puntuamos y
+      // re-ordenamos ese pool con rankCandidates (media ponderada multi-campo): el
+      // usuario ve un parecido HONESTO, nunca certeza por un acierto parcial.
       let results: Array<z.infer<typeof searchResultSchema>> = [];
-      if (busqueda.tipo === "persona" && targetNombre.trim().length > 0) {
-        const found = await deps.personRepo.searchPersonsPublic(
-          targetNombre,
-          busqueda.zona ?? undefined,
+      if (matchQuery !== null) {
+        const candidates = await deps.personRepo.searchPersonsPublic(
+          matchQuery.nombre,
+          matchQuery.zona,
         );
-        results = found.map((persona) => ({ ...persona }));
+        const ranked = await rankCandidates(matchQuery, candidates);
+        // El candidate de cada RankedCandidate es la vista publica (sin contacto);
+        // adjuntamos el score ponderado para que el bot muestre el parecido real.
+        results = ranked.map(({ candidate, score }) => ({ ...candidate, score }));
       }
 
       // Proyeccion publica: descarta buscador_contact_id antes de responder.

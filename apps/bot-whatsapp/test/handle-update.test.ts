@@ -156,7 +156,9 @@ describe("busqueda", () => {
     const conversation = transport.allText();
     expect(conversation).toContain("Jose Sintetico");
     expect(conversation).toContain("Zona Sur");
-    expect(conversation).toContain("similitud: 90%");
+    // Presentacion honesta: "posible coincidencia" + parecido ponderado (no certeza).
+    expect(conversation).toContain("posible coincidencia");
+    expect(conversation).toContain("parecido: 90%");
   });
 
   it("muestra el mensaje de sin resultados cuando el backend no devuelve nada", async () => {
@@ -189,7 +191,9 @@ describe("busqueda de mascotas", () => {
     const conversation = transport.allText();
     expect(conversation).toContain("Firulais");
     expect(conversation).toContain("Zona Sur");
-    expect(conversation).toContain("similitud: 80%");
+    // Presentacion honesta: "posible coincidencia" + parecido ponderado (no certeza).
+    expect(conversation).toContain("posible coincidencia");
+    expect(conversation).toContain("parecido: 80%");
   });
 
   it("muestra el mensaje de sin resultados cuando no hay coincidencias", async () => {
