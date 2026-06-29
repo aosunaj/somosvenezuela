@@ -162,6 +162,47 @@ describe("rankCandidates — degradacion segura (guardrail #5)", () => {
   });
 });
 
+describe("rankCandidates — score honesto multi-campo (no 100% por nombre suelto)", () => {
+  // Requisito de producto (la dueña): buscar SOLO el nombre de pila contra un
+  // registro con apellidos NO puede dar certeza. Promediamos todos los campos.
+  const ID_ANA = "44444444-4444-4444-8444-444444444444";
+
+  it("nombre de pila suelto vs registro con apellidos NO da 100% ni 'exacto'", async () => {
+    const ranked = await rankCandidates({ nombre: "Ana" }, [
+      person(ID_ANA, "Ana", { apellidos: "Osuna Jurado" }),
+    ]);
+    expect(ranked[0]?.candidate.id).toBe(ID_ANA);
+    // Score PARCIAL honesto: el nombre de pila casa, pero hay apellidos sin cubrir.
+    expect(ranked[0]?.score).toBeLessThan(1);
+    expect(ranked[0]?.score).toBeGreaterThan(0);
+    expect(ranked[0]?.method).not.toBe("exacto");
+  });
+
+  it("coincidir mas campos sube el score (Ana Osuna > Ana)", async () => {
+    const candidate = person(ID_ANA, "Ana", { apellidos: "Osuna Jurado" });
+    const soloNombre = await rankCandidates({ nombre: "Ana" }, [candidate]);
+    const conApellido = await rankCandidates({ nombre: "Ana Osuna" }, [candidate]);
+    expect(conApellido[0]!.score).toBeGreaterThan(soloNombre[0]!.score);
+  });
+
+  it("coincidencia completa real SI da 1.0 'exacto'", async () => {
+    const ranked = await rankCandidates({ nombre: "Ana Osuna Jurado" }, [
+      person(ID_ANA, "Ana", { apellidos: "Osuna Jurado" }),
+    ]);
+    expect(ranked[0]?.score).toBe(1);
+    expect(ranked[0]?.method).toBe("exacto");
+  });
+
+  it("una errata en el nombre NO descarta el candidato (sigue con score > 0)", async () => {
+    // 'Ann' es un typo de 'Ana': trigram/levenshtein lo toleran, no lo descartan.
+    const ranked = await rankCandidates({ nombre: "Ann" }, [
+      person(ID_ANA, "Ana", { apellidos: "Osuna Jurado" }),
+    ]);
+    expect(ranked[0]?.candidate.id).toBe(ID_ANA);
+    expect(ranked[0]?.score).toBeGreaterThan(0);
+  });
+});
+
 describe("rankCandidates — entradas borde", () => {
   it("universo vacio devuelve lista vacia", async () => {
     const ranked = await rankCandidates({ nombre: "Jose" }, []);
