@@ -3,6 +3,7 @@ import { plataformaCanalSchema, type PlataformaCanal } from "core";
 import type { ChannelLinkRepo, SecureDeleteRepo } from "db";
 import { apiError } from "../errors.js";
 import { idParamsSchema } from "../schemas.js";
+import { sensitiveRouteRateLimit } from "../rate-limit.js";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 
@@ -67,6 +68,10 @@ export function registerDeleteSecureRoutes(
   typed.route({
     method: "DELETE",
     url: "/persons/:id/by-channel",
+    // Rate limit ESTRICTO (guardrail #6): operacion sensible por canal. Solo se
+    // aplica si el plugin global esta registrado (ver app.ts); en tests sin plugin
+    // es un no-op.
+    config: sensitiveRouteRateLimit,
     schema: {
       params: idParamsSchema,
     },

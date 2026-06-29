@@ -26,6 +26,25 @@ export function apiError(error: string, message: string): ApiErrorBody {
   return { error, message };
 }
 
+/** Error que ya trae su propio codigo HTTP (p. ej. el 429 de @fastify/rate-limit). */
+interface HttpStatusError {
+  statusCode: number;
+}
+
+/**
+ * Detecta errores que YA portan un statusCode HTTP propio (los que lanzan plugins
+ * de Fastify como @fastify/rate-limit con 429). Hay que respetar ese codigo en vez
+ * de aplastarlo a un 500 generico (un rate limit superado NO es un fallo del
+ * servidor). Solo aceptamos codigos 4xx para no enmascarar errores 5xx reales.
+ */
+function isHttpStatusError(error: unknown): error is HttpStatusError {
+  if (typeof error !== "object" || error === null || !("statusCode" in error)) {
+    return false;
+  }
+  const status = (error as { statusCode: unknown }).statusCode;
+  return typeof status === "number" && status >= 400 && status < 500;
+}
+
 /**
  * Construye un 400 a partir de los errores de validacion de zod que adjunta
  * fastify-type-provider-zod. No vuelca el detalle crudo (puede contener el valor
@@ -88,6 +107,20 @@ export function errorHandler(
     return reply
       .code(500)
       .send(apiError("internal_error", "Ocurrio un error inesperado. Intentalo de nuevo mas tarde."));
+  }
+
+  if (isHttpStatusError(error)) {
+    // Errores 4xx con codigo propio (p. ej. 429 del rate limit, guardrail #6). Se
+    // respeta su statusCode; no es un fallo del servidor. Mensaje en espanol neutral
+    // y sin filtrar detalles internos.
+    if (error.statusCode === 429) {
+      return reply
+        .code(429)
+        .send(apiError("rate_limited", "Demasiadas peticiones. Espera un momento e intentalo de nuevo."));
+    }
+    return reply
+      .code(error.statusCode)
+      .send(apiError("request_error", "No se pudo procesar la peticion."));
   }
 
   // Cualquier otro error: respuesta generica.
