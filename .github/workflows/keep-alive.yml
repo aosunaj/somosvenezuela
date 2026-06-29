@@ -1,0 +1,45 @@
+name: keep-alive
+
+# Mantiene despiertos los servicios de Render free, que se duermen tras ~15 min sin
+# trafico HTTP entrante. Al dormirse, el primer mensaje sufre un arranque en frio de
+# ~30-60s y se puede perder, dejando al bot "mudo" tras periodos de inactividad.
+#
+# Este workflow pinea el bot y el backend cada 10 min para que NO lleguen a dormirse.
+#
+# AVISO de fiabilidad: el cron de GitHub Actions es best-effort y puede atrasarse en
+# horas de mucha carga; si aun asi ves dormidas, baja el intervalo a */5 o suma un
+# monitor de UptimeRobot (cada 5 min) a las mismas URLs. Para algo a prueba de balas,
+# un tier que no duerma. Solo corre desde la rama por defecto (master).
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+# Una sola corrida a la vez (evita pings solapados si una se atrasa).
+concurrency:
+  group: keep-alive
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pinea bot y backend (tolera arranque en frio)
+        run: |
+          urls=(
+            "https://somosvenezuela-bot-telegram.onrender.com/"
+            "https://somosvenezuela-backend.onrender.com/health"
+          )
+          for url in "${urls[@]}"; do
+            echo "Ping $url"
+            # --max-time 120 da margen para el arranque en frio (~30-60s) + reintentos.
+            # No fallamos la corrida si un ping no responde: el objetivo es DESPERTAR,
+            # no monitorizar (para alertas de caida, usar UptimeRobot). El ping en si
+            # ya dispara el spin-up aunque la respuesta llegue tarde.
+            if curl -fsS --max-time 120 --retry 2 --retry-all-errors "$url" -o /dev/null; then
+              echo "  OK (despierto)"
+            else
+              echo "  sin respuesta a tiempo (probable arranque en frio; igual lo desperto)"
+            fi
+          done
