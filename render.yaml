@@ -70,12 +70,13 @@ services:
       - key: SERVICE_TOKEN
         sync: false
 
-  # ── Bot de Telegram (long polling; sin webhook ni URL publica) ──────────────
-  # Corre como web service por el plan gratuito (workers son de pago). Abre un
-  # puerto de health solo para satisfacer el binding; el dialogo va por long polling.
-  # NOTA: el plan free duerme tras ~15 min sin trafico HTTP entrante y eso PARA el
-  # polling. Para mantenerlo despierto, apuntar un pinger externo gratuito
-  # (p. ej. UptimeRobot) a la URL del servicio cada 5 min.
+  # ── Bot de Telegram (WEBHOOK sobre su propia URL publica) ───────────────────
+  # Corre como web service por el plan gratuito (workers son de pago). Usa WEBHOOK,
+  # no long polling: cada mensaje entrante DESPIERTA al servicio dormido, asi que el
+  # bot no queda muerto tras los ~15 min de inactividad del plan free (el long polling
+  # no recibia trafico entrante y por eso se dormia para siempre). Render inyecta
+  # RENDER_EXTERNAL_URL con la URL publica; el bot registra el webhook al arrancar.
+  # Primer mensaje tras dormir: arranque en frio (~1 min) y luego responde normal.
   - type: web
     name: somosvenezuela-bot-telegram
     runtime: node
@@ -95,4 +96,9 @@ services:
         sync: false
       # El MISMO SERVICE_TOKEN que el backend, para que el poller entregue notificaciones.
       - key: SERVICE_TOKEN
+        sync: false
+      # Secreto del webhook: cadena al azar que elegis vos. Telegram la reenvia en el
+      # header de cada POST y el bot la valida. Recomendado (sin ella, cualquiera que
+      # adivine la URL podria inyectar updates falsos). Secreto.
+      - key: WEBHOOK_SECRET
         sync: false
