@@ -1,5 +1,5 @@
-import { edadSchema, idSchema, personCreateSchema } from "../schemas.js";
-import type { PersonCreate } from "../schemas.js";
+import { edadSchema, idSchema, personCreateSchema, petCreateSchema } from "../schemas.js";
+import type { PersonCreate, PetCreate } from "../schemas.js";
 import { DEFAULT_FUENTE } from "../enums.js";
 import * as M from "./messages.js";
 import {
@@ -7,6 +7,7 @@ import {
   type ConversationInput,
   type ConversationState,
   type Effect,
+  type PetDraft,
   type RegisterDraft,
   type Reply,
   type StepResult,
@@ -24,11 +25,16 @@ const CMD_START = "/start";
 const CMD_HELP = "/ayuda";
 const CMD_CANCEL = "/cancelar";
 const CMD_PET = "/mascota";
+const CMD_REGISTER_PET = "/registrarmascota";
 
 // Etiquetas de menu que, como texto, equivalen a elegir una opcion. Permite que
 // el adaptador mande el texto del boton sin tener que mapearlo a un comando.
-const MENU_TEXT: Record<string, "register" | "search" | "search_pets" | "delete" | "help"> = {
+const MENU_TEXT: Record<
+  string,
+  "register" | "register_pet" | "search" | "search_pets" | "delete" | "help"
+> = {
   [M.BUTTON.registrar.toLowerCase()]: "register",
+  [M.BUTTON.registrarMascota.toLowerCase()]: "register_pet",
   [M.BUTTON.buscar.toLowerCase()]: "search",
   [M.BUTTON.buscarMascota.toLowerCase()]: "search_pets",
   [M.BUTTON.borrar.toLowerCase()]: "delete",
@@ -106,6 +112,9 @@ function handleGlobalCommand(command: string): StepResult | null {
     case CMD_PET:
       // Atajo explicito para entrar directo a la busqueda de mascotas.
       return startFlow("search_pets");
+    case CMD_REGISTER_PET:
+      // Atajo explicito para entrar directo al registro de mascotas.
+      return startFlow("register_pet");
     default:
       return null;
   }
@@ -118,7 +127,13 @@ function startFlowFromText(text: string): StepResult | null {
   return startFlow(choice);
 }
 
-type FlowChoice = "register" | "search" | "search_pets" | "delete" | "help";
+type FlowChoice =
+  | "register"
+  | "register_pet"
+  | "search"
+  | "search_pets"
+  | "delete"
+  | "help";
 
 function startFlow(choice: FlowChoice): StepResult {
   switch (choice) {
@@ -126,6 +141,11 @@ function startFlow(choice: FlowChoice): StepResult {
       return result(
         { flow: "register", step: "nombre", draft: {} },
         [reply(M.REGISTER_ASK_NOMBRE)],
+      );
+    case "register_pet":
+      return result(
+        { flow: "register_pet", step: "nombre", draft: {} },
+        [reply(M.REGISTER_PET_ASK_NOMBRE, M.skipButtons())],
       );
     case "search":
       return result({ flow: "search", step: "query" }, [reply(M.SEARCH_ASK_QUERY)]);
@@ -163,6 +183,8 @@ export function step(state: ConversationState, input: ConversationInput): StepRe
       return stepIdle(input);
     case "register":
       return stepRegister(state, input);
+    case "register_pet":
+      return stepRegisterPet(state, input);
     case "search":
       return stepSearch(state, input);
     case "search_pets":
@@ -201,7 +223,7 @@ function stepRegister(state: RegisterState, input: FlowInput): StepResult {
       return result(state, [reply(M.registerSummary(requireNombre(state.draft)), M.confirmButtons())]);
     }
     return input.result.ok
-      ? toMenu(M.REGISTER_DONE)
+      ? toMenu(M.registerDone(input.result.id))
       : result(state, [reply(M.REGISTER_FAILED, M.confirmButtons())]);
   }
 
@@ -352,6 +374,149 @@ function advanceRegister(
 /** Garantiza que el resumen siempre recibe un nombre (ya validado antes). */
 function requireNombre(draft: RegisterDraft): RegisterDraft & { nombre: string } {
   return { ...draft, nombre: draft.nombre ?? "" };
+}
+
+// ── Flujo: registrar mascota ─────────────────────────────────────────────────
+
+type RegisterPetState = Extract<ConversationState, { flow: "register_pet" }>;
+
+/** Pasos de texto opcional del registro de mascota y a que paso saltan. */
+const PET_NEXT: Record<
+  "nombre" | "tipo" | "raza",
+  { field: "nombre" | "tipo" | "raza"; nextStep: "tipo" | "raza" | "zona"; prompt: string }
+> = {
+  nombre: { field: "nombre", nextStep: "tipo", prompt: M.REGISTER_PET_ASK_TIPO },
+  tipo: { field: "tipo", nextStep: "raza", prompt: M.REGISTER_PET_ASK_RAZA },
+  raza: { field: "raza", nextStep: "zona", prompt: M.REGISTER_PET_ASK_ZONA },
+};
+
+function stepRegisterPet(state: RegisterPetState, input: FlowInput): StepResult {
+  if (input.kind === "effect_result") {
+    if (state.step !== "submitting" || input.result.type !== "create_pet") {
+      // Resultado inesperado: reofrecemos confirmar sin perder el draft.
+      return result(state, [reply(M.petSummary(state.draft), M.confirmButtons())]);
+    }
+    return input.result.ok
+      ? toMenu(M.registerPetDone(input.result.id))
+      : result(state, [reply(M.REGISTER_PET_FAILED, M.confirmButtons())]);
+  }
+
+  // input.kind === 'text'
+  const text = input.text;
+  switch (state.step) {
+    case "nombre":
+    case "tipo":
+    case "raza":
+      return registerPetSetOptionalTexto(state, text, PET_NEXT[state.step]);
+    case "zona":
+      return registerPetSetZona(state, text);
+    case "confirm":
+      return registerPetConfirm(state, text);
+    case "submitting":
+      // Esperando el effect_result; ignoramos el texto sin emitir respuesta.
+      return result(state, []);
+  }
+}
+
+/**
+ * Paso de texto opcional (nombre/tipo/raza): Omitir => null; texto no vacio => se
+ * valida con el schema; vacio sin omitir => re-pide el mismo paso. Avanza al siguiente.
+ */
+function registerPetSetOptionalTexto(
+  state: RegisterPetState,
+  text: string,
+  next: { field: "nombre" | "tipo" | "raza"; nextStep: "tipo" | "raza" | "zona"; prompt: string },
+): StepResult {
+  if (isSkip(text)) {
+    return advanceRegisterPet(state, { [next.field]: null }, next.nextStep, next.prompt);
+  }
+  const parsed = petCreateSchema.shape[next.field].safeParse(text);
+  if (!parsed.success || parsed.data == null) {
+    return result(
+      { flow: "register_pet", step: next.field, draft: state.draft },
+      [reply(M.REGISTER_PET_INVALID_TEXTO, M.skipButtons())],
+    );
+  }
+  return advanceRegisterPet(state, { [next.field]: parsed.data }, next.nextStep, next.prompt);
+}
+
+/** Ultimo paso opcional (zona): tras el va el resumen + confirmacion. */
+function registerPetSetZona(state: RegisterPetState, text: string): StepResult {
+  let value: string | null;
+  if (isSkip(text)) {
+    value = null;
+  } else {
+    const parsed = petCreateSchema.shape.zona.safeParse(text);
+    if (!parsed.success || parsed.data == null) {
+      return result(
+        { flow: "register_pet", step: "zona", draft: state.draft },
+        [reply(M.REGISTER_PET_INVALID_TEXTO, M.skipButtons())],
+      );
+    }
+    value = parsed.data;
+  }
+  const draft: PetDraft = { ...state.draft, zona: value };
+  return result(
+    { flow: "register_pet", step: "confirm", draft },
+    [reply(M.petSummary(draft), M.confirmButtons())],
+  );
+}
+
+/**
+ * En confirm: Cancelar => menu; Confirmar con al menos un dato => emite create_pet;
+ * Confirmar con TODO vacio => re-pide desde nombre (una mascota sin dato no sirve
+ * para buscar); cualquier otra respuesta => re-muestra el resumen.
+ */
+function registerPetConfirm(state: RegisterPetState, text: string): StepResult {
+  if (isCancel(text)) {
+    return toMenu(M.CANCELLED);
+  }
+  if (!isConfirm(text)) {
+    return result(state, [reply(M.petSummary(state.draft), M.confirmButtons())]);
+  }
+  if (petDraftIsEmpty(state.draft)) {
+    // Sin ningun dato no se puede buscar: volvemos a pedir desde el nombre.
+    return result(
+      { flow: "register_pet", step: "nombre", draft: {} },
+      [reply(M.REGISTER_PET_EMPTY), reply(M.REGISTER_PET_ASK_NOMBRE, M.skipButtons())],
+    );
+  }
+  const data = buildPetCreate(state.draft);
+  return result(
+    { flow: "register_pet", step: "submitting", draft: state.draft },
+    [], // sin respuesta aun: la final llega tras el effect_result
+    { type: "create_pet", data },
+  );
+}
+
+/** Una mascota sin nombre, tipo, raza ni zona es inutil para buscar. */
+function petDraftIsEmpty(draft: PetDraft): boolean {
+  const fields = [draft.nombre, draft.tipo, draft.raza, draft.zona];
+  return fields.every((v) => v == null || v === "");
+}
+
+/** Construye el `PetCreate` validado a partir del draft acumulado. */
+function buildPetCreate(draft: PetDraft): PetCreate {
+  // El registro nace estado/verificacion por defecto del dominio; aqui solo fijamos
+  // la fuente. NO incluimos contact_id (guardrail #1): el vinculo lo gestiona el canal.
+  return petCreateSchema.parse({
+    nombre: draft.nombre ?? undefined,
+    tipo: draft.tipo ?? undefined,
+    raza: draft.raza ?? undefined,
+    zona: draft.zona ?? undefined,
+    fuente: DEFAULT_FUENTE,
+  });
+}
+
+/** Avanza el registro de mascota fusionando el draft y pasando al siguiente paso. */
+function advanceRegisterPet(
+  state: RegisterPetState,
+  patch: Partial<PetDraft>,
+  nextStep: RegisterPetState["step"],
+  prompt: string,
+): StepResult {
+  const draft: PetDraft = { ...state.draft, ...patch };
+  return result({ flow: "register_pet", step: nextStep, draft }, [reply(prompt, M.skipButtons())]);
 }
 
 // ── Flujo: buscar ────────────────────────────────────────────────────────────

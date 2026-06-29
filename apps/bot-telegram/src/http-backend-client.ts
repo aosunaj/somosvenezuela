@@ -12,6 +12,7 @@ import {
 //
 //   POST   `${BACKEND_URL}/persons`                 -> crea persona (slice anterior).
 //   POST   `${BACKEND_URL}/register-person`         -> crea persona VINCULADA al canal.
+//   POST   `${BACKEND_URL}/pets`                     -> crea mascota VINCULADA al canal.
 //   DELETE `${BACKEND_URL}/persons/:id/by-channel`  -> borra si el canal es dueno.
 //   POST   `${BACKEND_URL}/searches`                -> busca persona, vincula al buscador.
 //   GET    `${BACKEND_URL}/search/pets`             -> busca mascotas (vista publica).
@@ -23,6 +24,11 @@ import {
 /** Respuesta de POST /register-person: solo nos interesa el id creado. */
 const registerResponseSchema = z.object({
   personId: z.string(),
+});
+
+/** Respuesta de POST /pets: solo nos interesa el id de la mascota creada. */
+const petResponseSchema = z.object({
+  id: z.string(),
 });
 
 /** Respuesta de POST /searches: la maquina recibe la vista publica + score. */
@@ -83,6 +89,27 @@ export class HttpBackendClient implements BackendClient {
     const json: unknown = await res.json();
     const parsed = registerResponseSchema.parse(json);
     return { id: parsed.personId };
+  }
+
+  async registerPet(
+    pet: unknown,
+    channel: ChannelIdentity,
+  ): Promise<{ readonly id: string }> {
+    const res = await fetch(`${this.#baseUrl}/pets`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // El backend resuelve el vinculo usuario<->canal a partir de `channel` y crea
+      // la mascota ligada a ese contacto. El cuerpo es el PetCreate + el canal.
+      body: JSON.stringify({ ...(pet as Record<string, unknown>), channel }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`POST /pets fallo con estado ${res.status}`);
+    }
+
+    const json: unknown = await res.json();
+    const parsed = petResponseSchema.parse(json);
+    return { id: parsed.id };
   }
 
   async deleteByChannel(

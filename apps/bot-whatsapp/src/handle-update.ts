@@ -169,12 +169,25 @@ async function executeEffect(
     case "create_person": {
       try {
         // Registro VINCULADO al canal: el backend persiste channel + opt_in.
-        await backend.registerPerson(effect.data, channel);
-        return { type: "create_person", ok: true };
+        // Devolvemos el id para que la maquina se lo entregue al usuario (derecho
+        // al borrado, principio #5). El id NO es PII de contacto (guardrail #1).
+        const { id } = await backend.registerPerson(effect.data, channel);
+        return { type: "create_person", ok: true, id };
       } catch {
         // Fallo de alta: la maquina sabe re-pedir confirmacion con REGISTER_FAILED.
         // No propagamos el detalle interno del error (guardrail #1/#6).
         return { type: "create_person", ok: false };
+      }
+    }
+    case "create_pet": {
+      try {
+        // Alta de mascota VINCULADA al canal: el backend persiste channel + opt_in.
+        // Devolvemos el id de la mascota (no es PII de contacto) para el borrado.
+        const { id } = await backend.registerPet(effect.data, channel);
+        return { type: "create_pet", ok: true, id };
+      } catch {
+        // Fallo de alta: la maquina re-pide confirmacion con REGISTER_PET_FAILED.
+        return { type: "create_pet", ok: false };
       }
     }
     case "search_persons": {

@@ -188,6 +188,160 @@ describe("flujo registrar (completo hasta el efecto y la respuesta final)", () =
     expect(failed.state.flow).toBe("register");
     expect(joinReplies(failed)).toContain("intentalo");
   });
+
+  it("la respuesta final entrega el id del registro para poder borrarlo luego", () => {
+    const res = run(initialState, [
+      text(BUTTON.registrar),
+      text("Lucia"),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.confirmar),
+    ]);
+    const done = step(res.state, {
+      kind: "effect_result",
+      result: { type: "create_person", ok: true, id: SYNTH_PERSON_ID },
+    });
+    expect(done.state).toEqual({ flow: "idle" });
+    const txt = joinReplies(done);
+    expect(txt).toContain("Registrado");
+    expect(txt).toContain(SYNTH_PERSON_ID);
+  });
+});
+
+// ── Flujo registrar mascota ──────────────────────────────────────────────────
+
+describe("flujo registrar mascota (completo hasta el efecto y la respuesta final)", () => {
+  it("el texto del boton 'Registrar mascota' inicia el flujo en el paso nombre", () => {
+    const res = step(initialState, text(BUTTON.registrarMascota));
+    expect(res.state.flow).toBe("register_pet");
+    expect((res.state as Extract<ConversationState, { flow: "register_pet" }>).step).toBe(
+      "nombre",
+    );
+  });
+
+  it("recoge datos paso a paso, resume, confirma y emite create_pet con id", () => {
+    const res = run(initialState, [
+      text(BUTTON.registrarMascota),
+      text("Firulais"), // nombre
+      text("perro"), // tipo
+      text("mestizo"), // raza
+      text("Caracas Centro"), // zona
+    ]);
+
+    // Tras zona: estado en confirm, con resumen de mascota.
+    expect(res.state.flow).toBe("register_pet");
+    expect((res.state as Extract<ConversationState, { flow: "register_pet" }>).step).toBe(
+      "confirm",
+    );
+    const summary = joinReplies(res);
+    expect(summary).toContain("Firulais");
+    expect(summary).toContain("perro");
+    expect(summary).toContain("Caracas Centro");
+
+    // Confirmar emite el efecto create_pet, sin respuesta aun.
+    const confirmed = step(res.state, text(BUTTON.confirmar));
+    expect(confirmed.replies).toHaveLength(0);
+    const effect = confirmed.effect as Extract<Effect, { type: "create_pet" }>;
+    expect(effect.type).toBe("create_pet");
+    expect(effect.data.nombre).toBe("Firulais");
+    expect(effect.data.tipo).toBe("perro");
+    expect(effect.data.raza).toBe("mestizo");
+    expect(effect.data.zona).toBe("Caracas Centro");
+    expect(effect.data.fuente).toBe("propia");
+    expect(
+      (confirmed.state as Extract<ConversationState, { flow: "register_pet" }>).step,
+    ).toBe("submitting");
+
+    // El adaptador re-inyecta el resultado ok con id -> respuesta final + idle.
+    const done = step(confirmed.state, {
+      kind: "effect_result",
+      result: { type: "create_pet", ok: true, id: SYNTH_PET_ID },
+    });
+    expect(done.state).toEqual({ flow: "idle" });
+    const txt = joinReplies(done);
+    expect(txt).toContain("Registrada");
+    expect(txt).toContain(SYNTH_PET_ID);
+  });
+
+  it("permite omitir todos los campos menos uno y registra igual", () => {
+    const res = run(initialState, [
+      text(BUTTON.registrarMascota),
+      text(BUTTON.omitir), // nombre
+      text("gato"), // tipo
+      text(BUTTON.omitir), // raza
+      text(BUTTON.omitir), // zona
+      text(BUTTON.confirmar),
+    ]);
+    const effect = res.effect as Extract<Effect, { type: "create_pet" }>;
+    expect(effect.type).toBe("create_pet");
+    expect(effect.data.tipo).toBe("gato");
+    expect(effect.data.nombre == null).toBe(true);
+    expect(effect.data.raza == null).toBe(true);
+  });
+
+  it("una mascota SIN ningun dato no se registra: re-pide desde el nombre", () => {
+    const res = run(initialState, [
+      text(BUTTON.registrarMascota),
+      text(BUTTON.omitir), // nombre
+      text(BUTTON.omitir), // tipo
+      text(BUTTON.omitir), // raza
+      text(BUTTON.omitir), // zona
+      text(BUTTON.confirmar), // confirma con todo vacio
+    ]);
+    // No emite efecto y vuelve al paso nombre con un aviso.
+    expect(res.effect).toBeUndefined();
+    expect(res.state.flow).toBe("register_pet");
+    expect((res.state as Extract<ConversationState, { flow: "register_pet" }>).step).toBe(
+      "nombre",
+    );
+    expect(joinReplies(res)).toContain("al menos un dato");
+  });
+
+  it("el comando /registrarmascota tambien inicia el flujo", () => {
+    const res = step(initialState, cmd("/registrarmascota"));
+    expect(res.state.flow).toBe("register_pet");
+  });
+
+  it("respuesta final con fallo del efecto re-ofrece confirmar", () => {
+    const res = run(initialState, [
+      text(BUTTON.registrarMascota),
+      text("Michi"),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.confirmar),
+    ]);
+    const failed = step(res.state, {
+      kind: "effect_result",
+      result: { type: "create_pet", ok: false },
+    });
+    expect(failed.state.flow).toBe("register_pet");
+    expect(joinReplies(failed)).toContain("intentalo");
+  });
+
+  it("/cancelar en mitad del registro de mascota vuelve a idle", () => {
+    const midway = run(initialState, [text(BUTTON.registrarMascota), text("Firulais")]);
+    expect(midway.state.flow).toBe("register_pet");
+    const cancelled = step(midway.state, cmd("/cancelar"));
+    expect(cancelled.state).toEqual({ flow: "idle" });
+  });
+
+  it("el efecto create_pet no filtra contacto", () => {
+    const res = run(initialState, [
+      text(BUTTON.registrarMascota),
+      text("Firulais"),
+      text("perro"),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.confirmar),
+    ]);
+    const blob = serializeAll(res);
+    expect(blob).not.toContain("contact_id");
+    expect(blob).not.toContain("telefono");
+    expect(blob).not.toContain("chat_id");
+  });
 });
 
 // ── Confirmacion robusta: sinonimos naturales + cancelar ─────────────────────

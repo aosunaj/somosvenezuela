@@ -74,6 +74,8 @@ export class NotOwnerError extends Error {
  *
  * - `registerPerson` envia el `PersonCreate` que arma la maquina MAS la identidad del
  *   canal (POST /register-person), para que el registro quede vinculado al usuario.
+ * - `registerPet` envia el `PetCreate` que arma la maquina MAS la identidad del canal
+ *   (POST /pets con `channel`), para que la mascota quede vinculada al usuario.
  * - `deleteByChannel` borra un registro solo si el canal que lo pide es su dueno
  *   (DELETE /persons/:id/by-channel); el backend autoriza, el adaptador no decide.
  * - `searchPersons`/`searchPets` devuelven la vista publica (sin contacto) con score.
@@ -84,6 +86,10 @@ export interface BackendClient {
   createPerson(data: unknown): Promise<{ readonly id: string }>;
   registerPerson(
     person: unknown,
+    channel: ChannelIdentity,
+  ): Promise<{ readonly id: string }>;
+  registerPet(
+    pet: unknown,
     channel: ChannelIdentity,
   ): Promise<{ readonly id: string }>;
   deleteByChannel(personId: string, channel: ChannelIdentity): Promise<void>;

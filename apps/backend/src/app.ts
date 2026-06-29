@@ -69,7 +69,11 @@ export async function buildApp(
   registerSearchesRoutes(app, deps);
   registerSearchRoutes(app, deps);
   // Mascotas + mapa (lado publico).
-  registerPetRoutes(app, { petRepo: deps.petRepo, petSearchRepo: deps.petSearchRepo });
+  registerPetRoutes(app, {
+    petRepo: deps.petRepo,
+    petSearchRepo: deps.petSearchRepo,
+    channelLinkRepo: deps.channelLinkRepo,
+  });
   registerZoneRoutes(app, { zoneRepo: deps.zoneRepo, serviceToken: deps.serviceToken });
   registerNeedRoutes(app, { needRepo: deps.needRepo, serviceToken: deps.serviceToken });
   // Vinculo de canal, borrado seguro y notificaciones (lado interno/sensible).

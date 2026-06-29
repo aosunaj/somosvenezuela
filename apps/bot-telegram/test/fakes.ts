@@ -60,6 +60,11 @@ export interface RegisterCall {
   readonly channel: ChannelIdentity;
 }
 
+export interface RegisterPetCall {
+  readonly pet: unknown;
+  readonly channel: ChannelIdentity;
+}
+
 export interface DeleteCall {
   readonly personId: string;
   readonly channel: ChannelIdentity;
@@ -93,6 +98,7 @@ interface FakeBackendOptions {
 export class FakeBackend implements BackendClient {
   readonly createCalls: CreatePersonCall[] = [];
   readonly registerCalls: RegisterCall[] = [];
+  readonly registerPetCalls: RegisterPetCall[] = [];
   readonly deleteCalls: DeleteCall[] = [];
   readonly searchCalls: SearchCall[] = [];
   readonly petSearchCalls: SearchCall[] = [];
@@ -115,6 +121,17 @@ export class FakeBackend implements BackendClient {
     channel: ChannelIdentity,
   ): Promise<{ readonly id: string }> {
     this.registerCalls.push({ person, channel });
+    if (this.#opts.failCreate === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+    return { id: this.#opts.createdId ?? SYNTH_PERSON_ID };
+  }
+
+  async registerPet(
+    pet: unknown,
+    channel: ChannelIdentity,
+  ): Promise<{ readonly id: string }> {
+    this.registerPetCalls.push({ pet, channel });
     if (this.#opts.failCreate === true) {
       throw new Error("backend caido (sintetico)");
     }

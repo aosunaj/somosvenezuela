@@ -1,4 +1,4 @@
-import type { PersonCreate } from "../schemas.js";
+import type { PersonCreate, PetCreate } from "../schemas.js";
 import type { PublicPerson, PublicPet } from "../schemas.js";
 
 // Tipos PUROS de la maquina de conversacion compartida (CLAUDE.md, 02-design.md).
@@ -33,16 +33,29 @@ export interface Reply {
  */
 export type Effect =
   | { readonly type: "create_person"; readonly data: PersonCreate }
+  | { readonly type: "create_pet"; readonly data: PetCreate }
   | { readonly type: "search_persons"; readonly query: string; readonly zona?: string }
   | { readonly type: "search_pets"; readonly query: string; readonly zona?: string }
   | { readonly type: "delete_person"; readonly personId: string };
 
 // ── Effect result (re-inyectado por el adaptador) ────────────────────────────
 
-/** Resultado de `create_person`: ok o fallo (sin detalle de contacto). */
+/**
+ * Resultado de `create_person`: ok o fallo (sin detalle de contacto). Cuando es ok,
+ * lleva el `id` del registro creado para poder entregarlo al usuario (derecho al
+ * borrado, principio #5). El id NO es PII de contacto (guardrail #1).
+ */
 export type CreatePersonResult =
-  | { readonly type: "create_person"; readonly ok: true }
+  | { readonly type: "create_person"; readonly ok: true; readonly id?: string }
   | { readonly type: "create_person"; readonly ok: false };
+
+/**
+ * Resultado de `create_pet`: ok o fallo. Cuando es ok, lleva el `id` de la mascota
+ * creada para entregarlo al usuario (derecho al borrado). El id NO es PII de contacto.
+ */
+export type CreatePetResult =
+  | { readonly type: "create_pet"; readonly ok: true; readonly id?: string }
+  | { readonly type: "create_pet"; readonly ok: false };
 
 /**
  * Resultado de `search_persons`. Los resultados llegan como VISTA PUBLICA
@@ -70,6 +83,7 @@ export type DeletePersonResult =
 /** Union de todos los resultados que el adaptador puede re-inyectar. */
 export type EffectResult =
   | CreatePersonResult
+  | CreatePetResult
   | SearchPersonsResult
   | SearchPetsResult
   | DeletePersonResult;
@@ -98,6 +112,17 @@ export interface RegisterDraft {
   readonly descripcion?: string | null;
 }
 
+/**
+ * Datos recogidos paso a paso durante el registro de una mascota. TODOS opcionales
+ * (espeja `petCreateSchema`): una mascota puede no tener nombre/raza conocidos.
+ */
+export interface PetDraft {
+  readonly nombre?: string | null;
+  readonly tipo?: string | null;
+  readonly raza?: string | null;
+  readonly zona?: string | null;
+}
+
 // ── State ────────────────────────────────────────────────────────────────────
 
 /**
@@ -118,6 +143,11 @@ export type ConversationState =
         | "confirm"
         | "submitting";
       readonly draft: RegisterDraft;
+    }
+  | {
+      readonly flow: "register_pet";
+      readonly step: "nombre" | "tipo" | "raza" | "zona" | "confirm" | "submitting";
+      readonly draft: PetDraft;
     }
   | {
       readonly flow: "search";

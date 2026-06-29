@@ -11,5 +11,8 @@ export {
   searchResults,
   searchPetResults,
   registerSummary,
+  registerDone,
+  petSummary,
+  registerPetDone,
   deleteConfirm,
 } from "./messages.js";

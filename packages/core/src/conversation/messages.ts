@@ -10,7 +10,8 @@ import type { PublicPerson, PublicPet } from "../schemas.js";
 /** Etiquetas de los botones del menu principal y de confirmacion. */
 export const BUTTON = {
   registrar: "Registrar persona",
-  buscar: "Buscar",
+  buscar: "Buscar persona",
+  registrarMascota: "Registrar mascota",
   buscarMascota: "Buscar mascota",
   borrar: "Borrar mi registro",
   ayuda: "Ayuda",
@@ -23,7 +24,8 @@ export const BUTTON = {
 export function menuButtons(): string[][] {
   return [
     [BUTTON.registrar, BUTTON.buscar],
-    [BUTTON.buscarMascota, BUTTON.borrar],
+    [BUTTON.registrarMascota, BUTTON.buscarMascota],
+    [BUTTON.borrar],
     [BUTTON.ayuda],
   ];
 }
@@ -85,9 +87,22 @@ export const REGISTER_ASK_DESCRIPCION =
 export const REGISTER_INVALID_TEXTO =
   "Ese dato quedo vacio. Escribe algo, o pulsa Omitir para dejarlo en blanco.";
 
-export const REGISTER_DONE =
-  "Registrado. Gracias por ayudar a que nadie se quede atras. " +
-  "Avisaremos en cuanto haya una coincidencia.";
+/**
+ * Mensaje final del registro de persona. Si el backend devolvio un id, se lo
+ * entregamos al usuario para que pueda BORRAR su registro despues (principio #5,
+ * derecho al borrado): "Borrar mi registro" pide ese codigo. El id de la persona
+ * NO es dato de contacto, asi que mostrarlo no viola el guardrail #1.
+ */
+export function registerDone(id?: string): string {
+  const base =
+    "Registrado. Gracias por ayudar a que nadie se quede atras. " +
+    "Avisaremos en cuanto haya una coincidencia.";
+  if (id === undefined || id === "") return base;
+  return (
+    "Registrado. Guarda este codigo por si quieres borrar el registro luego: " +
+    `${id}. Avisaremos en cuanto haya una coincidencia.`
+  );
+}
 
 export const REGISTER_FAILED =
   "No pudimos guardar el registro ahora mismo. Por favor, intentalo de nuevo en un momento.";
@@ -113,6 +128,67 @@ export function registerSummary(draft: {
     `- Zona: ${orDash(draft.zona)}\n` +
     `- Descripcion: ${orDash(draft.descripcion)}\n\n` +
     "¿Confirmas el registro?"
+  );
+}
+
+// ── Registro de mascota ──────────────────────────────────────────────────────
+
+export const REGISTER_PET_ASK_NOMBRE =
+  "Vamos a registrar una mascota. ¿Como se llama? Si no tiene nombre, pulsa Omitir.";
+
+export const REGISTER_PET_ASK_TIPO =
+  "¿Que tipo de animal es? (perro, gato...). Si no lo sabes, pulsa Omitir.";
+
+export const REGISTER_PET_ASK_RAZA =
+  "¿De que raza es? Si no la conoces, pulsa Omitir.";
+
+export const REGISTER_PET_ASK_ZONA =
+  "¿En que zona se le vio por ultima vez? Si no lo sabes, pulsa Omitir.";
+
+export const REGISTER_PET_INVALID_TEXTO =
+  "Ese dato quedo vacio. Escribe algo, o pulsa Omitir para dejarlo en blanco.";
+
+/**
+ * Aviso cuando la mascota quedo sin ningun dato (nombre, tipo, raza y zona vacios):
+ * un registro asi no sirve para buscar, asi que re-pedimos al menos un dato.
+ */
+export const REGISTER_PET_EMPTY =
+  "Necesitamos al menos un dato para poder buscar a la mascota. " +
+  "Cuentanos su nombre, tipo, raza o zona.";
+
+export const REGISTER_PET_FAILED =
+  "No pudimos guardar la mascota ahora mismo. Por favor, intentalo de nuevo en un momento.";
+
+/**
+ * Mensaje final del registro de mascota. Como en personas, si el backend devolvio
+ * un id se lo entregamos para que pueda borrar el registro luego (principio #5).
+ * El id de la mascota NO es dato de contacto (guardrail #1).
+ */
+export function registerPetDone(id?: string): string {
+  const base =
+    "Registrada. Gracias por ayudar a reunir a las mascotas con sus familias. " +
+    "Avisaremos en cuanto haya una coincidencia.";
+  if (id === undefined || id === "") return base;
+  return (
+    "Registrada. Guarda este codigo por si quieres borrar el registro luego: " +
+    `${id}. Avisaremos en cuanto haya una coincidencia.`
+  );
+}
+
+/** Resumen del registro de mascota antes de confirmar. No incluye dato de contacto. */
+export function petSummary(draft: {
+  nombre?: string | null;
+  tipo?: string | null;
+  raza?: string | null;
+  zona?: string | null;
+}): string {
+  return (
+    "Revisa los datos de la mascota antes de guardar:\n" +
+    `- Nombre: ${orDash(draft.nombre)}\n` +
+    `- Tipo: ${orDash(draft.tipo)}\n` +
+    `- Raza: ${orDash(draft.raza)}\n` +
+    `- Zona: ${orDash(draft.zona)}\n\n` +
+    "¿Confirmas el registro de la mascota?"
   );
 }
 

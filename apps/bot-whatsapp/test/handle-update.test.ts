@@ -75,8 +75,62 @@ describe("registro end-to-end", () => {
     // El canal viaja al backend para vincular el registro al usuario (wa_id como cadena).
     expect(call?.channel).toEqual({ plataforma: "whatsapp", chatId: WA });
 
-    // El ultimo mensaje confirma el registro.
-    expect(transport.allText()).toContain("Registrado");
+    // El ultimo mensaje confirma el registro e incluye el id para poder borrarlo luego.
+    const conversationEnd = transport.allText();
+    expect(conversationEnd).toContain("Registrado");
+    expect(conversationEnd).toContain("11111111-1111-4111-8111-111111111111");
+  });
+});
+
+describe("registro de mascota end-to-end", () => {
+  it("recorre el flujo, recoge datos y al confirmar llama a registerPet con el canal y el id", async () => {
+    const backend = new FakeBackend();
+    const { deps, transport } = makeDeps(backend);
+
+    await send(
+      deps,
+      WA,
+      BUTTON.registrarMascota, // inicia el flujo de registro de mascota
+      "Firulais", // nombre
+      "perro", // tipo
+      BUTTON.omitir, // raza
+      "Zona Sur", // zona
+      BUTTON.confirmar, // confirma -> dispara create_pet
+    );
+
+    // Pidio los datos de la mascota y mostro el resumen.
+    const conversation = transport.allText();
+    expect(conversation).toContain("Revisa los datos de la mascota");
+
+    // Llamo a registerPet una vez con los datos correctos, SIN contacto de terceros,
+    // y vinculando el canal (plataforma + wa_id como cadena).
+    expect(backend.registerPetCalls).toHaveLength(1);
+    const call = backend.registerPetCalls[0];
+    const pet = call?.pet as Record<string, unknown>;
+    expect(pet["nombre"]).toBe("Firulais");
+    expect(pet["tipo"]).toBe("perro");
+    expect(pet["zona"]).toBe("Zona Sur");
+    expect(pet["fuente"]).toBe("propia");
+    expect("contact_id" in pet).toBe(false);
+    expect(call?.channel).toEqual({ plataforma: "whatsapp", chatId: WA });
+
+    // Mensaje final de mascota registrada con el id para poder borrarla luego.
+    expect(conversation).toContain("Registrada");
+    expect(conversation).toContain("11111111-1111-4111-8111-111111111111");
+  });
+
+  it("responde un mensaje amable si registerPet lanza, sin filtrar el error", async () => {
+    const backend = new FakeBackend({ failCreate: true });
+    const { deps, transport } = makeDeps(backend);
+
+    await expect(
+      send(deps, WA, BUTTON.registrarMascota, "Michi", "gato", BUTTON.omitir, BUTTON.omitir, BUTTON.confirmar),
+    ).resolves.toBeUndefined();
+
+    expect(backend.registerPetCalls).toHaveLength(1);
+    const conversation = transport.allText();
+    expect(conversation).toContain("No pudimos guardar la mascota");
+    expect(conversation).not.toContain("sintetico");
   });
 });
 
