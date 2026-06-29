@@ -23,8 +23,10 @@ import type { AiScorer } from "./scorer.js";
 
 /**
  * Metodo que produjo el score de un candidato.
- *   - 'exacto'  : el nombre normalizado coincide exactamente.
- *   - 'trigram' : similitud local (levenshtein + trigramas).
+ *   - 'exacto'  : la similitud de nombre es PERFECTA y COMPLETA (todos los tokens
+ *                 buscados y todos los del candidato casan). Coincidir solo el
+ *                 nombre de pila de un registro con apellidos NO es 'exacto'.
+ *   - 'trigram' : similitud local (levenshtein + trigramas), parcial.
  *   - 'ia'      : score ajustado por la capa de IA (Claude). Solo si se inyecta
  *                 un AiScorer y este eleva la confianza de un caso dudoso.
  */
@@ -79,12 +81,55 @@ const DEFAULT_WEIGHTS = { nombre: 0.7, zona: 0.15, descripcion: 0.15 } as const;
 const DEFAULT_AI_DOUBT_MIN = 0.45;
 const DEFAULT_AI_DOUBT_MAX = 0.85;
 
-/** Similitud por nombre entre dos textos ya normalizados+canonicalizados. */
+/** Similitud entre dos TOKENS (palabras sueltas) ya normalizados. */
+function tokenSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  // Tokens son cadenas cortas: pesamos mas Levenshtein que trigramas (capta erratas).
+  return combinedSimilarity(a, b, 0.6);
+}
+
+/** Suma de los mejores emparejamientos de cada token de `src` contra `dst`. */
+function bestMatchSum(src: readonly string[], dst: readonly string[]): number {
+  let sum = 0;
+  for (const x of src) {
+    let best = 0;
+    for (const y of dst) {
+      const s = tokenSimilarity(x, y);
+      if (s > best) best = s;
+    }
+    sum += best;
+  }
+  return sum;
+}
+
+/**
+ * Similitud por nombre TOKEN A TOKEN (no cadena-completa-contra-cadena), entre
+ * dos nombres ya normalizados+canonicalizados.
+ *
+ * POR QUE token a token: comparar "ana" contra "ana osuna jurado" como una sola
+ * cadena penaliza por longitud y diluye un acierto real del nombre de pila a un
+ * score falsamente bajo. Aqui cada token buscado se empareja con su mejor token
+ * del candidato y viceversa.
+ *
+ * La medida es una F1 difusa (media armonica de dos coberturas):
+ *   - precision: cuanto de lo BUSCADO aparece en el candidato.
+ *   - recall:    cuanto del CANDIDATO quedo cubierto por lo buscado.
+ * Asi, coincidir SOLO el nombre de pila contra un registro con apellidos da un
+ * score PARCIAL honesto (recall bajo: hay apellidos sin cubrir), nunca 100%;
+ * cubrir mas tokens sube el score; y una errata en un token NO descarta porque
+ * el trigram/levenshtein del token la tolera. Coincidencia perfecta y completa
+ * de todos los tokens (en ambos sentidos) da 1.
+ */
 function nameSimilarity(queryName: string, candidateName: string): number {
-  if (queryName.length === 0 || candidateName.length === 0) return 0;
-  if (queryName === candidateName) return 1;
-  // Nombres son cadenas cortas: pesamos mas Levenshtein que trigramas.
-  return combinedSimilarity(queryName, candidateName, 0.6);
+  const qTokens = queryName.split(" ").filter((t) => t.length > 0);
+  const cTokens = candidateName.split(" ").filter((t) => t.length > 0);
+  if (qTokens.length === 0 || cTokens.length === 0) return 0;
+
+  const precision = bestMatchSum(qTokens, cTokens) / qTokens.length;
+  const recall = bestMatchSum(cTokens, qTokens) / cTokens.length;
+  if (precision + recall === 0) return 0;
+
+  return clamp01((2 * precision * recall) / (precision + recall));
 }
 
 /** Similitud por campo de texto libre (zona/descripcion) ya normalizado. */
@@ -104,7 +149,16 @@ function candidateFullName(candidate: PublicPerson): string {
   return normalizeName(`${candidate.nombre} ${apellidos}`.trim());
 }
 
-/** Media ponderada de las similitudes por campo presentes en la query. */
+/**
+ * Media ponderada de las similitudes por campo presentes en la query.
+ *
+ * Devuelve el `score` agregado [0,1] y `exact`: si la coincidencia es PERFECTA
+ * en todos los campos comparados (score === 1). Coincidir un solo campo (p. ej.
+ * el nombre de pila de un registro con apellidos) ya NO puede dar 1, porque la
+ * similitud de nombre es token a token y penaliza los tokens sin cubrir: el
+ * resultado es la MEDIA, nunca el maximo de un campo (guardrail #4 — la IA
+ * sugiere, nunca afirma certeza por un acierto parcial).
+ */
 function localScore(
   query: MatchQuery,
   candidate: PublicPerson,
@@ -113,7 +167,6 @@ function localScore(
   const qName = normalizeName(query.nombre);
   const cName = candidateFullName(candidate);
   const nameSim = nameSimilarity(qName, cName);
-  const exact = qName.length > 0 && qName === cName;
 
   let weightSum = weights.nombre;
   let acc = weights.nombre * nameSim;
@@ -133,6 +186,9 @@ function localScore(
   }
 
   const score = weightSum > 0 ? clamp01(acc / weightSum) : 0;
+  // 'exacto' SOLO si la media ponderada es perfecta: todos los campos casan al
+  // 100%. Un acierto parcial (nombre de pila suelto) cae por debajo de 1.
+  const exact = qName.length > 0 && score >= 1;
   return { score, exact };
 }
 

@@ -122,6 +122,45 @@ describe("POST /searches", () => {
     expect(calls.searchCreated[0]?.buscador_contact_id).toBe(SYNTH_CONTACT_ID);
   });
 
+  it("re-puntua los results con score ponderado honesto (no el greatest del RPC)", async () => {
+    // El fake searchPersonsPublic devuelve "Persona Sintetica Apellido Ficticio"
+    // con score de RPC 0.91. Al buscar SOLO el nombre de pila ("Persona"), el
+    // re-ranking ponderado debe dar un parecido PARCIAL (< 1, distinto del 0.91
+    // crudo del RPC): coincidir un campo no es certeza (requisito de la dueña).
+    const res = await app.inject({
+      method: "POST",
+      url: "/searches",
+      payload: { tipo: "persona", target_nombre: "Persona" },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(Array.isArray(body.results)).toBe(true);
+    expect(body.results.length).toBeGreaterThan(0);
+    const top = body.results[0];
+    expect(top.score).toBeTypeOf("number");
+    // Honesto: nombre de pila suelto vs registro con apellidos -> NUNCA 100%.
+    expect(top.score).toBeLessThan(1);
+    expect(top.score).toBeGreaterThan(0);
+    // Y NO es el score crudo del RPC (0.91): se recalculo con la media ponderada.
+    expect(top.score).toBeLessThan(0.91);
+    assertNoContact(res.payload);
+  });
+
+  it("results ordenados por score ponderado descendente", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/searches",
+      payload: { tipo: "persona", target_nombre: "Persona Sintetica" },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const scores: number[] = res.json().results.map((r: { score: number }) => r.score);
+    for (let i = 1; i < scores.length; i++) {
+      expect(scores[i - 1]).toBeGreaterThanOrEqual(scores[i]!);
+    }
+  });
+
   it("rechaza body invalido con 400 (tipo no valido)", async () => {
     const res = await app.inject({
       method: "POST",
