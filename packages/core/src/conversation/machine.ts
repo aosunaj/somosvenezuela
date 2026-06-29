@@ -24,10 +24,25 @@ import {
 const CMD_START = "/start";
 const CMD_HELP = "/ayuda";
 const CMD_CANCEL = "/cancelar";
-const CMD_PET = "/mascota";
-const CMD_REGISTER_PET = "/registrarmascota";
-const CMD_ZONES = "/zonas";
-const CMD_NEEDS = "/necesidades";
+// Comandos con barra que INICIAN un flujo del menu. Incluye alias con y sin guion
+// bajo para que coincidan con cualquier lista de comandos de BotFather (p. ej.
+// /buscar_mascota y /buscarmascota apuntan al mismo flujo). /start, /ayuda y
+// /cancelar se manejan aparte (no inician un flujo).
+const CMD_TO_FLOW: Record<string, FlowChoice> = {
+  "/registrar": "register",
+  "/registrarpersona": "register",
+  "/buscar": "search",
+  "/buscarpersona": "search",
+  "/mascota": "search_pets",
+  "/buscarmascota": "search_pets",
+  "/buscar_mascota": "search_pets",
+  "/registrarmascota": "register_pet",
+  "/registrar_mascota": "register_pet",
+  "/borrar": "delete",
+  "/zonas": "browse_zones",
+  "/puntos": "browse_zones",
+  "/necesidades": "browse_needs",
+};
 
 // Etiquetas de menu que, como texto, equivalen a elegir una opcion. Permite que
 // el adaptador mande el texto del boton sin tener que mapearlo a un comando.
@@ -120,20 +135,11 @@ function handleGlobalCommand(command: string): StepResult | null {
     case CMD_CANCEL:
       // /cancelar limpia cualquier draft y vuelve a idle (requisito MVP).
       return toMenu(M.CANCELLED);
-    case CMD_PET:
-      // Atajo explicito para entrar directo a la busqueda de mascotas.
-      return startFlow("search_pets");
-    case CMD_REGISTER_PET:
-      // Atajo explicito para entrar directo al registro de mascotas.
-      return startFlow("register_pet");
-    case CMD_ZONES:
-      // Atajo explicito para ver los puntos de encuentro (mapa, solo lectura).
-      return startFlow("browse_zones");
-    case CMD_NEEDS:
-      // Atajo explicito para ver las necesidades por zona (mapa, solo lectura).
-      return startFlow("browse_needs");
-    default:
-      return null;
+    default: {
+      // Cualquier otro comando que inicie un flujo del menu (con alias BotFather).
+      const flow = CMD_TO_FLOW[command];
+      return flow ? startFlow(flow) : null;
+    }
   }
 }
 

@@ -141,6 +141,19 @@ describe("menu / idle", () => {
     const res = step(initialState, text(BUTTON.registrar));
     expect(res.state.flow).toBe("register");
   });
+
+  it.each([
+    ["/registrar", "register"],
+    ["/buscar", "search"],
+    ["/buscar_mascota", "search_pets"],
+    ["/registrar_mascota", "register_pet"],
+    ["/borrar", "delete"],
+    ["/zonas", "browse_zones"],
+    ["/necesidades", "browse_needs"],
+  ])("el comando %s inicia el flujo %s (alias BotFather)", (command, flow) => {
+    const res = step(initialState, cmd(command));
+    expect(res.state.flow).toBe(flow);
+  });
 });
 
 // ── Flujo registrar COMPLETO ─────────────────────────────────────────────────
