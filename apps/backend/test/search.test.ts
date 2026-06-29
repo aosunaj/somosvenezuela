@@ -112,6 +112,10 @@ describe("POST /searches", () => {
     assertNoContact(res.payload);
     expect("buscador_contact_id" in body).toBe(false);
     expect(body.tipo).toBe("persona");
+    // Contrato que consume el bot: la respuesta SIEMPRE trae `results` (array de
+    // coincidencias publicas, sin contact_id). Sin esto, el bot no puede mostrar
+    // resultados y rompe la busqueda (regresion de Capa 2).
+    expect(Array.isArray(body.results)).toBe(true);
     // El campo sensible si llega al repo (uso interno), pero no sale en la respuesta.
     expect(calls.searchCreated[0]?.buscador_contact_id).toBe(SYNTH_CONTACT_ID);
   });

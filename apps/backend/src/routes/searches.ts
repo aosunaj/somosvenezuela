@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { plataformaCanalSchema, searchCreateSchema, searchSchema } from "core";
+import {
+  plataformaCanalSchema,
+  publicPersonSchema,
+  searchCreateSchema,
+  searchSchema,
+} from "core";
 import { runMatchingForSearch } from "../services/matching.js";
 import type { AppDeps } from "../deps.js";
 import type { FastifyInstance } from "fastify";
@@ -22,6 +27,20 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
  * derivamos aqui como salida de la API, igual que publicPersonSchema en personas.
  */
 const publicSearchSchema = searchSchema.omit({ buscador_contact_id: true });
+
+/** Item de resultado: persona publica (sin contact_id) + score difuso opcional. */
+const searchResultSchema = publicPersonSchema.extend({ score: z.number().optional() });
+
+/**
+ * Respuesta de POST /searches: la vista publica de la busqueda creada MAS los
+ * resultados instantaneos (coincidencias publicas para mostrar a quien busca ahora).
+ * En paralelo, el matching de fondo propone matches 'propuesto' para revision humana
+ * (notify-later). Los `results` son la busqueda difusa amplia (vista persons_public:
+ * sin menores ni contact_id), no los matches estrictos del cerebro.
+ */
+const searchesResponseSchema = publicSearchSchema.extend({
+  results: z.array(searchResultSchema),
+});
 
 /**
  * Vinculo de canal opcional en el cuerpo. Si viene, se resuelve/crea el contacto
@@ -54,7 +73,7 @@ export function registerSearchesRoutes(app: FastifyInstance, deps: AppDeps): voi
     url: "/searches",
     schema: {
       body: searchesBodySchema,
-      response: { 201: publicSearchSchema },
+      response: { 201: searchesResponseSchema },
     },
     handler: async (request, reply) => {
       const { channel, ...searchInput } = request.body;
@@ -92,10 +111,22 @@ export function registerSearchesRoutes(app: FastifyInstance, deps: AppDeps): voi
         );
       }
 
+      // Resultados instantaneos para quien busca: misma busqueda difusa publica
+      // (vista persons_public: sin menores ni contact_id) que se muestra AHORA.
+      // Es mas amplia que los matches estrictos del cerebro (umbral 0.45).
+      let results: Array<z.infer<typeof searchResultSchema>> = [];
+      if (busqueda.tipo === "persona" && targetNombre.trim().length > 0) {
+        const found = await deps.personRepo.searchPersonsPublic(
+          targetNombre,
+          busqueda.zona ?? undefined,
+        );
+        results = found.map((persona) => ({ ...persona }));
+      }
+
       // Proyeccion publica: descarta buscador_contact_id antes de responder.
       const { buscador_contact_id: _sensible, ...publica } = busqueda;
       void _sensible;
-      return reply.code(201).send(publica);
+      return reply.code(201).send({ ...publica, results });
     },
   });
 }
