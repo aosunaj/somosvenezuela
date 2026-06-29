@@ -108,6 +108,33 @@ export interface SearchRow {
   created_at: string;
 }
 
+// ── matches ──────────────────────────────────────────────────────────────────
+
+/** Metodo que produjo el score de un match. Espeja el CHECK del esquema. */
+export type MatchMetodo = "exacto" | "trigram" | "ia";
+
+/** Estado de revision humana de un match. Espeja el CHECK del esquema. */
+export type MatchEstadoRevision = "propuesto" | "confirmado" | "descartado";
+
+/**
+ * Fila completa de la tabla base `matches` (migrations/0001). Una coincidencia
+ * PROPUESTA por el motor entre una busqueda y una persona/mascota, para REVISION
+ * HUMANA. No contiene PII: solo ids internos, score y estado de revision.
+ */
+export interface MatchRow {
+  id: string;
+  search_id: string | null;
+  person_id: string | null;
+  pet_id: string | null;
+  /** numeric(4,3) en [0,1]; llega como number desde supabase-js. */
+  score: number;
+  metodo: MatchMetodo;
+  estado_revision: MatchEstadoRevision;
+  /** Identificador libre del revisor humano (sin PII). */
+  revisado_por: string | null;
+  created_at: string;
+}
+
 // ── contacts (SENSIBLE) ──────────────────────────────────────────────────────
 
 /** Fila completa de la tabla base `contacts`. SENSIBLE: solo backend. */

@@ -9,6 +9,7 @@ export * from "./contact.js";
 export * from "./channel.js";
 export * from "./channel-link.js";
 export * from "./notification.js";
+export * from "./match.js";
 export * from "./secure-delete.js";
 export * from "./zone.js";
 export * from "./need.js";
@@ -24,6 +25,7 @@ import {
   createNotificationRepo,
   type NotificationRepo,
 } from "./notification.js";
+import { createMatchRepo, type MatchRepo } from "./match.js";
 import { createPersonRepo, type PersonRepo } from "./person.js";
 import { createPetRepo, type PetRepo } from "./pet.js";
 import { createPetSearchRepo, type PetSearchRepo } from "./pet-extra.js";
@@ -54,6 +56,8 @@ export interface Repos {
   channelLinks: ChannelLinkRepo;
   /** INTERNO: solo backend. Cola de notificaciones para el worker/bot. */
   notifications: NotificationRepo;
+  /** INTERNO: solo backend. Coincidencias propuestas para revision humana. */
+  matches: MatchRepo;
   /** INTERNO: solo backend. Borrado seguro por el dueno (derecho al olvido). */
   secureDelete: SecureDeleteRepo;
 }
@@ -74,6 +78,7 @@ export function createRepos(client: DbClient): Repos {
     channels: createChannelRepo(client),
     channelLinks: createChannelLinkRepo(client),
     notifications: createNotificationRepo(client),
+    matches: createMatchRepo(client),
     secureDelete: createSecureDeleteRepo(client),
   };
 }

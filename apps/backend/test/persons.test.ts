@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
 import {
+  makeFakeMatchRepo,
   makeFakePersonRepo,
   makeFakeSearchRepo,
   makeRepoCalls,
@@ -22,6 +23,7 @@ beforeEach(async () => {
     {
       personRepo: makeFakePersonRepo(calls),
       searchRepo: makeFakeSearchRepo(calls),
+      matchRepo: makeFakeMatchRepo(calls),
       serviceToken: "token-de-servicio-sintetico",
     },
     // Limite alto para que el rate limit no interfiera con los tests.
@@ -162,6 +164,7 @@ describe("DELETE /persons/:id — sin serviceToken configurado", () => {
       {
         personRepo: makeFakePersonRepo(localCalls),
         searchRepo: makeFakeSearchRepo(localCalls),
+        matchRepo: makeFakeMatchRepo(localCalls),
         serviceToken: undefined,
       },
       { rateLimitMax: 1000 },

@@ -5,7 +5,15 @@ import type {
   Search,
   SearchCreate,
 } from "core";
-import type { PersonRepo, PublicPersonResult, SearchRepo } from "db";
+import type {
+  ChannelRepo,
+  ChannelTransport,
+  MatchCreate,
+  MatchRepo,
+  PersonRepo,
+  PublicPersonResult,
+  SearchRepo,
+} from "db";
 
 // Repos FALSOS para testear la API sin BD real (no hay service_role en el test).
 // Capturan lo que reciben y devuelven filas controladas, para verificar el
@@ -64,6 +72,7 @@ export interface RepoCalls {
   searchCreated: SearchCreate[];
   removedIds: string[];
   searchQueries: Array<{ query: string; zona?: string }>;
+  matchCreated: MatchCreate[];
 }
 
 export function makeRepoCalls(): RepoCalls {
@@ -72,6 +81,7 @@ export function makeRepoCalls(): RepoCalls {
     searchCreated: [],
     removedIds: [],
     searchQueries: [],
+    matchCreated: [],
   };
 }
 
@@ -122,6 +132,60 @@ export function makeFakeSearchRepo(calls: RepoCalls): SearchRepo {
     },
     async getById() {
       return null;
+    },
+  };
+}
+
+/**
+ * Fake MatchRepo: captura los matches que crearia el motor (para aserciones) y
+ * devuelve respuestas vacias en los listados. Las rutas de revision se prueban en
+ * matches.test.ts con un fake dedicado; aqui solo cubrimos el disparo desde /searches.
+ */
+export function makeFakeMatchRepo(calls: RepoCalls): MatchRepo {
+  return {
+    async create(input) {
+      calls.matchCreated.push(input);
+      return {
+        id: "b0000000-0000-4000-8000-000000000001",
+        search_id: input.search_id,
+        person_id: input.person_id ?? null,
+        pet_id: input.pet_id ?? null,
+        score: input.score,
+        metodo: input.metodo,
+        estado_revision: "propuesto",
+        revisado_por: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      };
+    },
+    async listPendingWithContext() {
+      return [];
+    },
+    async getById() {
+      return null;
+    },
+    async setEstadoRevision() {
+      /* no-op */
+    },
+    async getConfirmContext() {
+      return null;
+    },
+  };
+}
+
+/** Fake ChannelRepo: solo expone la direccion de transporte (sin contact_id). */
+export function makeFakeChannelRepo(): ChannelRepo {
+  return {
+    async create() {
+      throw new Error("no usado en estos tests");
+    },
+    async listByContact() {
+      return [];
+    },
+    async getTransport(): Promise<ChannelTransport | null> {
+      return null;
+    },
+    async remove() {
+      /* no-op */
     },
   };
 }

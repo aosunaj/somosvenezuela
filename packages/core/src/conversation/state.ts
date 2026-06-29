@@ -1,5 +1,5 @@
 import type { PersonCreate } from "../schemas.js";
-import type { PublicPerson } from "../schemas.js";
+import type { PublicPerson, PublicPet } from "../schemas.js";
 
 // Tipos PUROS de la maquina de conversacion compartida (CLAUDE.md, 02-design.md).
 // La maquina es el "cerebro" que reutilizan Telegram y WhatsApp; los adaptadores
@@ -34,6 +34,7 @@ export interface Reply {
 export type Effect =
   | { readonly type: "create_person"; readonly data: PersonCreate }
   | { readonly type: "search_persons"; readonly query: string; readonly zona?: string }
+  | { readonly type: "search_pets"; readonly query: string; readonly zona?: string }
   | { readonly type: "delete_person"; readonly personId: string };
 
 // ── Effect result (re-inyectado por el adaptador) ────────────────────────────
@@ -52,6 +53,15 @@ export type SearchPersonsResult = {
   readonly results: ReadonlyArray<PublicPerson & { readonly score?: number }>;
 };
 
+/**
+ * Resultado de `search_pets`. Los resultados llegan como VISTA PUBLICA
+ * (`PublicPet`, sin `contact_id`) opcionalmente con un `score` 0..1.
+ */
+export type SearchPetsResult = {
+  readonly type: "search_pets";
+  readonly results: ReadonlyArray<PublicPet & { readonly score?: number }>;
+};
+
 /** Resultado de `delete_person`: ok o fallo. */
 export type DeletePersonResult =
   | { readonly type: "delete_person"; readonly ok: true }
@@ -61,6 +71,7 @@ export type DeletePersonResult =
 export type EffectResult =
   | CreatePersonResult
   | SearchPersonsResult
+  | SearchPetsResult
   | DeletePersonResult;
 
 // ── Input ────────────────────────────────────────────────────────────────────
@@ -110,6 +121,11 @@ export type ConversationState =
     }
   | {
       readonly flow: "search";
+      readonly step: "query" | "searching";
+      readonly query?: string;
+    }
+  | {
+      readonly flow: "search_pets";
       readonly step: "query" | "searching";
       readonly query?: string;
     }

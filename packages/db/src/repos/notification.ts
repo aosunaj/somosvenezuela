@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PlataformaCanal } from "core";
 import type { DbClient } from "../client.js";
 import { DbError } from "../errors.js";
 
@@ -73,8 +74,14 @@ function rowToNotification(row: NotificationRow): Notification {
 export interface NotificationRepo {
   /** ESCRITURA INTERNA. Encola una notificacion (nace 'pendiente'). Solo backend. */
   create(input: NotificationCreate): Promise<Notification>;
-  /** LECTURA INTERNA. Lista notificaciones pendientes para que un worker las entregue. */
-  listPending(limit?: number): Promise<Notification[]>;
+  /**
+   * LECTURA INTERNA. Lista notificaciones pendientes para que un worker las entregue.
+   * Si se pasa `plataforma`, filtra A NIVEL DE BD por la plataforma del canal
+   * (inner join con `channels`): cada bot solo ve las suyas, sin exponer chat_id de
+   * una plataforma a otra (guardrail #1). El `limit` se aplica YA filtrado por
+   * plataforma, de modo que las de otra plataforma no tapan a las propias.
+   */
+  listPending(limit?: number, plataforma?: PlataformaCanal): Promise<Notification[]>;
   /** ESCRITURA INTERNA. Marca una notificacion como enviada tras entregarla. */
   markSent(id: string): Promise<void>;
   /** ESCRITURA INTERNA. Marca una notificacion como fallida (reintentos/diagnostico). */
@@ -106,11 +113,34 @@ export function createNotificationRepo(client: DbClient): NotificationRepo {
       return rowToNotification(row);
     },
 
-    async listPending(limit = 50): Promise<Notification[]> {
+    async listPending(limit = 50, plataforma?: PlataformaCanal): Promise<Notification[]> {
+      // Sin plataforma: comportamiento original (sin join), lista global.
+      if (plataforma === undefined) {
+        const { data, error } = await client
+          .from("notifications")
+          .select("*")
+          .eq("estado", "pendiente")
+          // Prioridad alta primero; dentro, las mas antiguas primero (FIFO).
+          .order("prioridad", { ascending: false })
+          .order("created_at", { ascending: true })
+          .limit(limit)
+          .returns<NotificationRow[]>();
+
+        if (error) throw new DbError(`No se pudieron listar notificaciones: ${error.message}`, error.code);
+        return (data ?? []).map(rowToNotification);
+      }
+
+      // Con plataforma: filtramos en BD por la plataforma del canal con un inner
+      // join de PostgREST (`channels!inner`). El inner join descarta las que no
+      // tienen channel_id (no son entregables por un bot), y el `limit` se aplica
+      // a las filas de ESTA plataforma. El cast a NotificationRow[] sigue valido:
+      // rowToNotification solo lee campos de notification; `channels` embebido se
+      // ignora.
       const { data, error } = await client
         .from("notifications")
-        .select("*")
+        .select("*, channels!inner(plataforma)")
         .eq("estado", "pendiente")
+        .eq("channels.plataforma", plataforma)
         // Prioridad alta primero; dentro, las mas antiguas primero (FIFO).
         .order("prioridad", { ascending: false })
         .order("created_at", { ascending: true })

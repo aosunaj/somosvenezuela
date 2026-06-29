@@ -7,6 +7,12 @@ import { HttpBackendClient } from "./http-backend-client.js";
 import { InMemorySessionStore } from "./session-store.js";
 import { handleUpdate, type UpdateDeps } from "./handle-update.js";
 import { verifySignature } from "./verify-signature.js";
+import {
+  DEFAULT_POLL_INTERVAL_MS,
+  HttpNotificationsClient,
+  runNotificationPoller,
+  type MessageSender,
+} from "./notification-poller.js";
 
 // Punto de entrada del bot de WhatsApp (webhook con servidor http nativo de Node).
 //
@@ -37,6 +43,11 @@ const envSchema = z.object({
   WHATSAPP_APP_SECRET: z.string().min(1, "WHATSAPP_APP_SECRET es obligatorio"),
   // URL del backend (spec 01). Debe ser una URL valida.
   BACKEND_URL: z.url("BACKEND_URL debe ser una URL valida"),
+  // Token de servicio para leer/marcar notificaciones del backend. OPCIONAL: si no
+  // esta, el bot funciona igual pero NO entrega notificaciones (el poller no arranca).
+  SERVICE_TOKEN: z.string().min(1).optional(),
+  // Intervalo del poller de notificaciones en ms. OPCIONAL: por defecto 5000.
+  NOTIFICATIONS_POLL_INTERVAL_MS: z.coerce.number().int().positive().optional(),
 });
 
 interface Env {
@@ -45,6 +56,8 @@ interface Env {
   readonly verifyToken: string;
   readonly appSecret: string;
   readonly backendUrl: string;
+  readonly serviceToken?: string;
+  readonly pollIntervalMs: number;
 }
 
 function loadEnv(): Env {
@@ -59,13 +72,18 @@ function loadEnv(): Env {
     );
     process.exit(1);
   }
-  return {
+  const base = {
     whatsappToken: parsed.data.WHATSAPP_TOKEN,
     phoneNumberId: parsed.data.WHATSAPP_PHONE_NUMBER_ID,
     verifyToken: parsed.data.WHATSAPP_VERIFY_TOKEN,
     appSecret: parsed.data.WHATSAPP_APP_SECRET,
     backendUrl: parsed.data.BACKEND_URL,
+    pollIntervalMs: parsed.data.NOTIFICATIONS_POLL_INTERVAL_MS ?? DEFAULT_POLL_INTERVAL_MS,
   };
+  // exactOptionalPropertyTypes: solo incluimos serviceToken cuando es una cadena.
+  return parsed.data.SERVICE_TOKEN === undefined
+    ? base
+    : { ...base, serviceToken: parsed.data.SERVICE_TOKEN };
 }
 
 // ── Servidor webhook ─────────────────────────────────────────────────────────
@@ -200,11 +218,30 @@ function main(): void {
   loadDotenvIfPresent();
   const env = loadEnv();
 
+  const transport = new HttpWhatsAppTransport(env.whatsappToken, env.phoneNumberId);
   const deps: UpdateDeps = {
-    transport: new HttpWhatsAppTransport(env.whatsappToken, env.phoneNumberId),
+    transport,
     backend: new HttpBackendClient(env.backendUrl),
     sessions: new InMemorySessionStore(),
   };
+
+  // Arrancamos el poller de notificaciones EN PARALELO al servidor webhook (si hay
+  // token de servicio). El wa_id ya es una cadena, asi que el sender envuelve el
+  // transporte directamente, sin conversion.
+  if (env.serviceToken !== undefined) {
+    const sender: MessageSender = {
+      send: (chatId: string, text: string): Promise<void> =>
+        transport.sendMessage(chatId, text),
+    };
+    const notifications = new HttpNotificationsClient(env.backendUrl, env.serviceToken);
+    // No esperamos esta promesa: corre indefinidamente junto al servidor webhook.
+    void runNotificationPoller(notifications, sender, env.pollIntervalMs);
+    console.log("[bot-whatsapp] Poller de notificaciones iniciado.");
+  } else {
+    console.log(
+      "[bot-whatsapp] SERVICE_TOKEN ausente: no se entregaran notificaciones (poller desactivado).",
+    );
+  }
 
   const port = resolvePort();
   const server = buildServer(env, deps);

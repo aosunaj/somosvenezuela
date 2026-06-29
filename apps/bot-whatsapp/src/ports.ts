@@ -1,4 +1,4 @@
-import type { ConversationState, PublicPerson } from "core";
+import type { ConversationState, PublicPerson, PublicPet } from "core";
 
 // Puertos (interfaces inyectables) del adaptador de WhatsApp.
 //
@@ -33,22 +33,69 @@ export interface WhatsAppTransport {
 
 // ── Cliente del backend (spec 01) ────────────────────────────────────────────
 
-/** Resultado publico de una busqueda: vista publica + score opcional 0..1. */
+/** Resultado publico de una busqueda de personas: vista publica + score opcional 0..1. */
 export type PublicPersonResult = PublicPerson & { readonly score?: number };
+
+/** Resultado publico de una busqueda de mascotas: vista publica + score opcional 0..1. */
+export type PublicPetResult = PublicPet & { readonly score?: number };
+
+/**
+ * Identidad del canal del usuario, tal como la conoce el adaptador (NO la maquina):
+ * la plataforma del bot y el id del chat. El backend usa este vinculo para autorizar
+ * el borrado y para entregar notificaciones por el canal correcto.
+ *
+ * `chatId` viaja SIEMPRE como cadena hacia el backend (en WhatsApp ya es el `wa_id`,
+ * una cadena; el contrato lo unifica a `string` con Telegram). `telefono` es OPCIONAL
+ * y SENSIBLE: solo se usa internamente para notificar, nunca en respuestas publicas.
+ */
+export interface ChannelIdentity {
+  readonly plataforma: "telegram" | "whatsapp";
+  readonly chatId: string;
+  readonly telefono?: string;
+}
+
+/**
+ * Error que lanza `deleteByChannel` cuando el backend responde 403: el canal que pide
+ * el borrado NO es el dueno del registro. Es un fallo ESPERADO (no un error interno),
+ * y el adaptador lo distingue para dar un mensaje claro sin filtrar detalles.
+ */
+export class NotOwnerError extends Error {
+  constructor(message = "El canal no es dueno del registro.") {
+    super(message);
+    this.name = "NotOwnerError";
+  }
+}
 
 /**
  * Cliente del backend HTTP. Expone solo las operaciones que el adaptador necesita
- * para los flujos de registrar y buscar. JAMAS pide ni procesa `contact_id`:
- * - `createPerson` envia el `PersonCreate` que arma la maquina (sin contacto) y
- *   devuelve unicamente el id del registro creado.
- * - `searchPersons` devuelve la vista publica (sin contacto) con score.
+ * para los flujos de registrar, buscar y borrar. JAMAS pide ni procesa `contact_id`
+ * de terceros: el vinculo usuario<->canal viaja en `channel` (que el backend persiste
+ * en la tabla `channels`), y las vistas publicas que devuelve no traen contacto.
+ *
+ * - `registerPerson` envia el `PersonCreate` que arma la maquina MAS la identidad del
+ *   canal (POST /register-person), para que el registro quede vinculado al usuario.
+ * - `deleteByChannel` borra un registro solo si el canal que lo pide es su dueno
+ *   (DELETE /persons/:id/by-channel); el backend autoriza, el adaptador no decide.
+ * - `searchPersons`/`searchPets` devuelven la vista publica (sin contacto) con score.
+ * - `createPerson` se conserva por compatibilidad con tests del slice anterior; el
+ *   flujo real de registro usa `registerPerson`.
  */
 export interface BackendClient {
   createPerson(data: unknown): Promise<{ readonly id: string }>;
+  registerPerson(
+    person: unknown,
+    channel: ChannelIdentity,
+  ): Promise<{ readonly id: string }>;
+  deleteByChannel(personId: string, channel: ChannelIdentity): Promise<void>;
   searchPersons(
     query: string,
     zona?: string,
+    channel?: ChannelIdentity,
   ): Promise<readonly PublicPersonResult[]>;
+  searchPets(
+    query: string,
+    zona?: string,
+  ): Promise<readonly PublicPetResult[]>;
 }
 
 // ── Almacen de sesiones ──────────────────────────────────────────────────────

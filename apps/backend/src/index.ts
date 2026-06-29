@@ -32,7 +32,9 @@ async function main(): Promise<void> {
     zoneRepo: repos.zones,
     needRepo: repos.needs,
     channelLinkRepo: repos.channelLinks,
+    channelRepo: repos.channels,
     notificationRepo: repos.notifications,
+    matchRepo: repos.matches,
     secureDeleteRepo: repos.secureDelete,
     // Secreto de servicio para operaciones privilegiadas (DELETE). Si no esta
     // definido, esas operaciones quedan deshabilitadas (responden 401).

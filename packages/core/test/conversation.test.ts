@@ -7,6 +7,7 @@ import {
   type ConversationState,
   type Effect,
   type PublicPerson,
+  type PublicPet,
   type StepResult,
 } from "../src/index.js";
 
@@ -53,6 +54,27 @@ function synthPublicPerson(
     edad: 25,
     zona: "Zona Ficticia",
     descripcion: "Camiseta azul",
+    foto_url: null,
+    estado: "desaparecida",
+    fuente: "propia",
+    verificacion: "sin_verificar",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const SYNTH_PET_ID = "44444444-4444-4444-8444-444444444444";
+
+function synthPublicPet(
+  overrides: Partial<PublicPet & { score?: number }> = {},
+): PublicPet & { score?: number } {
+  return {
+    id: SYNTH_PET_ID,
+    nombre: "Firulais",
+    tipo: "perro",
+    raza: "Mestizo",
+    zona: "Zona Ficticia",
     foto_url: null,
     estado: "desaparecida",
     fuente: "propia",
@@ -259,6 +281,79 @@ describe("flujo buscar", () => {
   });
 });
 
+// ── Flujo buscar mascota ─────────────────────────────────────────────────────
+
+describe("flujo buscar mascota", () => {
+  it("el texto del boton 'Buscar mascota' inicia el flujo de mascotas", () => {
+    const res = step(initialState, text(BUTTON.buscarMascota));
+    expect(res.state.flow).toBe("search_pets");
+    expect((res.state as Extract<ConversationState, { flow: "search_pets" }>).step).toBe("query");
+  });
+
+  it("el comando /mascota tambien inicia el flujo de mascotas", () => {
+    const res = step(initialState, cmd("/mascota"));
+    expect(res.state.flow).toBe("search_pets");
+  });
+
+  it("query -> emite search_pets -> resultados", () => {
+    const started = step(initialState, text(BUTTON.buscarMascota));
+    expect(started.state.flow).toBe("search_pets");
+
+    const queried = step(started.state, text("Firulais perro"));
+    expect(queried.replies).toHaveLength(0);
+    const effect = queried.effect as Extract<Effect, { type: "search_pets" }>;
+    expect(effect.type).toBe("search_pets");
+    expect(effect.query).toBe("Firulais perro");
+    expect((queried.state as Extract<ConversationState, { flow: "search_pets" }>).step).toBe(
+      "searching",
+    );
+
+    const withResults = step(queried.state, {
+      kind: "effect_result",
+      result: {
+        type: "search_pets",
+        results: [synthPublicPet({ score: 0.88 })],
+      },
+    });
+    expect(withResults.state).toEqual({ flow: "idle" });
+    const txt = joinReplies(withResults);
+    expect(txt).toContain("Firulais");
+    expect(txt).toContain("perro");
+    expect(txt).toContain("88%");
+  });
+
+  it("cero resultados muestra mensaje claro y vuelve a idle", () => {
+    const queried = run(initialState, [text(BUTTON.buscarMascota), text("ninguna")]);
+    const empty = step(queried.state, {
+      kind: "effect_result",
+      result: { type: "search_pets", results: [] },
+    });
+    expect(empty.state).toEqual({ flow: "idle" });
+    expect(joinReplies(empty)).toContain("No encontramos");
+  });
+
+  it("query vacio re-pide sin emitir efecto", () => {
+    const started = step(initialState, text(BUTTON.buscarMascota));
+    const res = step(started.state, text("   "));
+    expect(res.effect).toBeUndefined();
+    expect(res.state.flow).toBe("search_pets");
+  });
+
+  it("/ayuda interrumpe el flujo y vuelve a idle con el menu", () => {
+    const started = step(initialState, text(BUTTON.buscarMascota));
+    const helped = step(started.state, cmd("/ayuda"));
+    expect(helped.state).toEqual({ flow: "idle" });
+    expect(joinReplies(helped)).toContain("mascota");
+  });
+
+  it("el efecto search_pets no filtra contacto", () => {
+    const res = run(initialState, [text(BUTTON.buscarMascota), text("alguna")]);
+    const blob = serializeAll(res);
+    expect(blob).not.toContain("contact_id");
+    expect(blob).not.toContain("chat_id");
+  });
+});
+
 // ── Flujo borrar ─────────────────────────────────────────────────────────────
 
 describe("flujo borrar", () => {
@@ -314,6 +409,14 @@ describe("/cancelar vuelve a idle limpiando el draft", () => {
 
     const del = run(initialState, [text(BUTTON.borrar), text(SYNTH_PERSON_ID)]);
     expect(step(del.state, cmd("/cancelar")).state).toEqual({ flow: "idle" });
+  });
+
+  it("cancela en mitad de buscar mascota", () => {
+    const pets = run(initialState, [text(BUTTON.buscarMascota)]);
+    expect(pets.state.flow).toBe("search_pets");
+    const cancelled = step(pets.state, cmd("/cancelar"));
+    expect(cancelled.state).toEqual({ flow: "idle" });
+    expect(cancelled.replies[0]?.buttons).toBeDefined();
   });
 });
 

@@ -1,4 +1,4 @@
-import type { PublicPerson } from "../schemas.js";
+import type { PublicPerson, PublicPet } from "../schemas.js";
 
 // Textos de cara al usuario, en espanol neutral (sin voseo) y claros para gente
 // no tecnica. Lema interno: "Nadie se queda atras." (CLAUDE.md, guardrails).
@@ -11,6 +11,7 @@ import type { PublicPerson } from "../schemas.js";
 export const BUTTON = {
   registrar: "Registrar persona",
   buscar: "Buscar",
+  buscarMascota: "Buscar mascota",
   borrar: "Borrar mi registro",
   ayuda: "Ayuda",
   confirmar: "Confirmar",
@@ -18,11 +19,12 @@ export const BUTTON = {
   omitir: "Omitir",
 } as const;
 
-/** Teclado del menu principal (dos filas). */
+/** Teclado del menu principal. */
 export function menuButtons(): string[][] {
   return [
     [BUTTON.registrar, BUTTON.buscar],
-    [BUTTON.borrar, BUTTON.ayuda],
+    [BUTTON.buscarMascota, BUTTON.borrar],
+    [BUTTON.ayuda],
   ];
 }
 
@@ -47,6 +49,7 @@ export const HELP =
   "Puedo ayudarte a:\n" +
   "- Registrar a una persona desaparecida.\n" +
   "- Buscar entre los registros existentes.\n" +
+  "- Buscar una mascota perdida.\n" +
   "- Borrar un registro que hayas creado.\n\n" +
   "En cualquier momento puedes escribir /cancelar para volver al inicio.";
 
@@ -145,6 +148,46 @@ export function searchResults(
       typeof r.score === "number" ? `, similitud: ${Math.round(r.score * 100)}%` : "";
     return (
       `${i + 1}. ${r.nombre}${apellidos}${zona}\n` +
+      `   Estado: ${r.estado} · Fuente: ${r.fuente} · Verificacion: ${r.verificacion}${score}`
+    );
+  });
+  return [header, ...lines].join("\n");
+}
+
+// ── Busqueda de mascotas ─────────────────────────────────────────────────────
+
+export const SEARCH_PET_ASK_QUERY =
+  "¿Que mascota buscas? Escribe su nombre, el tipo (perro, gato...), la raza o la zona.";
+
+export const SEARCH_PET_INVALID_QUERY =
+  "Necesito algun dato para buscar. Escribe el nombre, el tipo, la raza o la zona de la mascota.";
+
+export const SEARCH_PET_NO_RESULTS =
+  "No encontramos mascotas que coincidan por ahora. El registro sigue creciendo: vuelve a intentarlo mas tarde.";
+
+export const SEARCH_PET_FAILED =
+  "No pudimos completar la busqueda ahora mismo. Por favor, intentalo de nuevo en un momento.";
+
+/**
+ * Formatea los resultados de busqueda de mascotas para mostrarlos al usuario.
+ * NUNCA incluye dato de contacto: recibe `PublicPet` (sin `contact_id`).
+ * Muestra nombre, tipo, raza, zona, estado, fuente, verificacion y, si llega, el score.
+ */
+export function searchPetResults(
+  results: ReadonlyArray<PublicPet & { score?: number }>,
+): string {
+  const header = `Encontramos ${results.length} ${
+    results.length === 1 ? "coincidencia" : "coincidencias"
+  }:`;
+  const lines = results.map((r, i) => {
+    const nombre = r.nombre ?? "Sin nombre";
+    const tipo = r.tipo ? `, tipo: ${r.tipo}` : "";
+    const raza = r.raza ? `, raza: ${r.raza}` : "";
+    const zona = r.zona ? `, zona: ${r.zona}` : "";
+    const score =
+      typeof r.score === "number" ? `, similitud: ${Math.round(r.score * 100)}%` : "";
+    return (
+      `${i + 1}. ${nombre}${tipo}${raza}${zona}\n` +
       `   Estado: ${r.estado} · Fuente: ${r.fuente} · Verificacion: ${r.verificacion}${score}`
     );
   });

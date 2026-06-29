@@ -1,7 +1,10 @@
-import type {
-  BackendClient,
-  PublicPersonResult,
-  TelegramTransport,
+import {
+  NotOwnerError,
+  type BackendClient,
+  type ChannelIdentity,
+  type PublicPersonResult,
+  type PublicPetResult,
+  type TelegramTransport,
 } from "../src/ports.js";
 
 // Dobles en memoria para probar el adaptador SIN red ni token.
@@ -52,25 +55,47 @@ export interface CreatePersonCall {
   readonly data: unknown;
 }
 
+export interface RegisterCall {
+  readonly person: unknown;
+  readonly channel: ChannelIdentity;
+}
+
+export interface DeleteCall {
+  readonly personId: string;
+  readonly channel: ChannelIdentity;
+}
+
 export interface SearchCall {
   readonly query: string;
   readonly zona?: string;
+  readonly channel?: ChannelIdentity;
 }
 
 interface FakeBackendOptions {
   /** Resultados que devolvera `searchPersons`. */
   readonly searchResults?: readonly PublicPersonResult[];
-  /** Si true, `createPerson` lanza (para probar manejo de errores). */
+  /** Resultados que devolvera `searchPets`. */
+  readonly petResults?: readonly PublicPetResult[];
+  /** Si true, `createPerson`/`registerPerson` lanzan (para probar errores). */
   readonly failCreate?: boolean;
   /** Si true, `searchPersons` lanza. */
   readonly failSearch?: boolean;
-  /** Id que devuelve `createPerson` cuando no falla. */
+  /** Si true, `searchPets` lanza. */
+  readonly failSearchPets?: boolean;
+  /** Si true, `deleteByChannel` lanza NotOwnerError (403: no es el dueno). */
+  readonly deleteNotOwner?: boolean;
+  /** Si true, `deleteByChannel` lanza un error generico (fallo transitorio). */
+  readonly failDelete?: boolean;
+  /** Id que devuelve `createPerson`/`registerPerson` cuando no falla. */
   readonly createdId?: string;
 }
 
 export class FakeBackend implements BackendClient {
   readonly createCalls: CreatePersonCall[] = [];
+  readonly registerCalls: RegisterCall[] = [];
+  readonly deleteCalls: DeleteCall[] = [];
   readonly searchCalls: SearchCall[] = [];
+  readonly petSearchCalls: SearchCall[] = [];
   readonly #opts: FakeBackendOptions;
 
   constructor(opts: FakeBackendOptions = {}) {
@@ -85,16 +110,61 @@ export class FakeBackend implements BackendClient {
     return { id: this.#opts.createdId ?? SYNTH_PERSON_ID };
   }
 
+  async registerPerson(
+    person: unknown,
+    channel: ChannelIdentity,
+  ): Promise<{ readonly id: string }> {
+    this.registerCalls.push({ person, channel });
+    if (this.#opts.failCreate === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+    return { id: this.#opts.createdId ?? SYNTH_PERSON_ID };
+  }
+
+  async deleteByChannel(personId: string, channel: ChannelIdentity): Promise<void> {
+    this.deleteCalls.push({ personId, channel });
+    if (this.#opts.deleteNotOwner === true) {
+      throw new NotOwnerError();
+    }
+    if (this.#opts.failDelete === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+  }
+
   async searchPersons(
     query: string,
     zona?: string,
+    channel?: ChannelIdentity,
   ): Promise<readonly PublicPersonResult[]> {
-    this.searchCalls.push(zona === undefined ? { query } : { query, zona });
+    this.searchCalls.push(buildSearchCall(query, zona, channel));
     if (this.#opts.failSearch === true) {
       throw new Error("backend caido (sintetico)");
     }
     return this.#opts.searchResults ?? [];
   }
+
+  async searchPets(
+    query: string,
+    zona?: string,
+  ): Promise<readonly PublicPetResult[]> {
+    this.petSearchCalls.push(buildSearchCall(query, zona));
+    if (this.#opts.failSearchPets === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+    return this.#opts.petResults ?? [];
+  }
+}
+
+/** Construye un SearchCall omitiendo claves opcionales ausentes (exactOptional). */
+function buildSearchCall(
+  query: string,
+  zona?: string,
+  channel?: ChannelIdentity,
+): SearchCall {
+  const call: { query: string; zona?: string; channel?: ChannelIdentity } = { query };
+  if (zona !== undefined) call.zona = zona;
+  if (channel !== undefined) call.channel = channel;
+  return call;
 }
 
 // ── Helpers de construccion ──────────────────────────────────────────────────
@@ -133,4 +203,29 @@ export function publicPersonFixture(
   // El cast es seguro para los tests: el fake del backend no valida el schema,
   // simulamos exactamente lo que llegaria por la interfaz.
   return base as unknown as PublicPersonResult;
+}
+
+/**
+ * Construye una vista publica sintetica de MASCOTA para resultados de busqueda.
+ * NO incluye contact_id (publicPet lo omite). Acepta campos contaminantes via
+ * `overrides` SOLO para el test de privacidad.
+ */
+export function publicPetFixture(
+  overrides: Record<string, unknown> = {},
+): PublicPetResult {
+  const base = {
+    id: SYNTH_PERSON_ID,
+    nombre: "Mascota Sintetica",
+    tipo: "perro",
+    raza: null,
+    zona: "Zona Norte",
+    foto_url: null,
+    estado: "desaparecida",
+    fuente: "propia",
+    verificacion: "sin_verificar",
+    created_at: "2026-06-28T00:00:00.000Z",
+    updated_at: "2026-06-28T00:00:00.000Z",
+    ...overrides,
+  };
+  return base as unknown as PublicPetResult;
 }

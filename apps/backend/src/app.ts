@@ -14,6 +14,7 @@ import { registerNeedRoutes } from "./routes/needs.js";
 import { registerRegisterLinkedRoutes } from "./routes/register-linked.js";
 import { registerDeleteSecureRoutes } from "./routes/delete-secure.js";
 import { registerNotificationsRoutes } from "./routes/notifications.js";
+import { registerMatchRoutes } from "./routes/matches.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerSearchesRoutes } from "./routes/searches.js";
 
@@ -81,6 +82,13 @@ export async function buildApp(
     secureDeleteRepo: deps.secureDeleteRepo,
   });
   registerNotificationsRoutes(app, {
+    notificationRepo: deps.notificationRepo,
+    channelRepo: deps.channelRepo,
+    serviceToken: deps.serviceToken,
+  });
+  // Revision humana de coincidencias (la IA sugiere, los humanos confirman).
+  registerMatchRoutes(app, {
+    matchRepo: deps.matchRepo,
     notificationRepo: deps.notificationRepo,
     serviceToken: deps.serviceToken,
   });

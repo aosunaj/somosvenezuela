@@ -1,5 +1,7 @@
 import type {
   ChannelLinkRepo,
+  ChannelRepo,
+  MatchRepo,
   NeedRepo,
   NotificationRepo,
   PersonRepo,
@@ -30,8 +32,12 @@ export interface AppDeps {
   needRepo: NeedRepo;
   /** Vinculo usuario<->canal (channels/opt_in) para registro y notificacion. */
   channelLinkRepo: ChannelLinkRepo;
+  /** Canales (SENSIBLE): resuelve channel_id -> (plataforma, chat_id) para entregar. */
+  channelRepo: ChannelRepo;
   /** Cola de notificaciones (entrega por el canal del usuario). */
   notificationRepo: NotificationRepo;
+  /** Coincidencias propuestas por el motor de matching, para revision humana. */
+  matchRepo: MatchRepo;
   /** Borrado seguro por el dueno (derecho al olvido). */
   secureDeleteRepo: SecureDeleteRepo;
   /**

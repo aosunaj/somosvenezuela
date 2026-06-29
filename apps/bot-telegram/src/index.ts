@@ -6,6 +6,12 @@ import { HttpBackendClient } from "./http-backend-client.js";
 import { InMemorySessionStore } from "./session-store.js";
 import { handleUpdate, type UpdateDeps } from "./handle-update.js";
 import { getUpdatesResponseSchema } from "./telegram-types.js";
+import {
+  DEFAULT_POLL_INTERVAL_MS,
+  HttpNotificationsClient,
+  runNotificationPoller,
+  type MessageSender,
+} from "./notification-poller.js";
 
 // Punto de entrada del bot de Telegram (long polling).
 //
@@ -24,9 +30,21 @@ const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN es obligatorio"),
   // URL del backend (spec 01). Debe ser una URL valida.
   BACKEND_URL: z.url("BACKEND_URL debe ser una URL valida"),
+  // Token de servicio para leer/marcar notificaciones del backend. OPCIONAL: si no
+  // esta, el bot funciona igual pero NO entrega notificaciones (el poller no arranca).
+  SERVICE_TOKEN: z.string().min(1).optional(),
+  // Intervalo del poller de notificaciones en ms. OPCIONAL: por defecto 5000.
+  NOTIFICATIONS_POLL_INTERVAL_MS: z.coerce.number().int().positive().optional(),
 });
 
-function loadEnv(): { telegramBotToken: string; backendUrl: string } {
+interface Env {
+  readonly telegramBotToken: string;
+  readonly backendUrl: string;
+  readonly serviceToken?: string;
+  readonly pollIntervalMs: number;
+}
+
+function loadEnv(): Env {
   const parsed = envSchema.safeParse(process.env);
   if (!parsed.success) {
     // Solo listamos QUE variable falla, jamas su valor.
@@ -38,10 +56,15 @@ function loadEnv(): { telegramBotToken: string; backendUrl: string } {
     );
     process.exit(1);
   }
-  return {
+  const base = {
     telegramBotToken: parsed.data.TELEGRAM_BOT_TOKEN,
     backendUrl: parsed.data.BACKEND_URL,
+    pollIntervalMs: parsed.data.NOTIFICATIONS_POLL_INTERVAL_MS ?? DEFAULT_POLL_INTERVAL_MS,
   };
+  // exactOptionalPropertyTypes: solo incluimos serviceToken cuando es una cadena.
+  return parsed.data.SERVICE_TOKEN === undefined
+    ? base
+    : { ...base, serviceToken: parsed.data.SERVICE_TOKEN };
 }
 
 // ── Long polling ─────────────────────────────────────────────────────────────
@@ -102,11 +125,35 @@ async function main(): Promise<void> {
   loadDotenvIfPresent();
   const env = loadEnv();
 
+  const transport = new HttpTelegramTransport(env.telegramBotToken);
   const deps: UpdateDeps = {
-    transport: new HttpTelegramTransport(env.telegramBotToken),
+    transport,
     backend: new HttpBackendClient(env.backendUrl),
     sessions: new InMemorySessionStore(),
   };
+
+  // Arrancamos el poller de notificaciones EN PARALELO al long polling (si hay token
+  // de servicio). El sender adapta el chat_id (cadena del backend) al chatId numerico
+  // que usa Telegram; si no es numerico, lo descartamos sin loggear el valor.
+  if (env.serviceToken !== undefined) {
+    const sender: MessageSender = {
+      send: async (chatId: string, text: string): Promise<void> => {
+        const numericChatId = Number(chatId);
+        if (!Number.isInteger(numericChatId)) {
+          throw new Error("chat_id de notificacion no es un id numerico de Telegram");
+        }
+        await transport.sendMessage(numericChatId, text);
+      },
+    };
+    const notifications = new HttpNotificationsClient(env.backendUrl, env.serviceToken);
+    // No esperamos esta promesa: corre indefinidamente junto al long polling.
+    void runNotificationPoller(notifications, sender, env.pollIntervalMs);
+    console.log("[bot-telegram] Poller de notificaciones iniciado.");
+  } else {
+    console.log(
+      "[bot-telegram] SERVICE_TOKEN ausente: no se entregaran notificaciones (poller desactivado).",
+    );
+  }
 
   console.log("[bot-telegram] Bot iniciado. Escuchando mensajes por long polling.");
   await runPolling(env.telegramBotToken, deps);

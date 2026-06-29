@@ -6,6 +6,7 @@ import {
   FakeBackend,
   FakeTransport,
   publicPersonFixture,
+  publicPetFixture,
   SYNTH_CONTACT_ID,
   textUpdate,
 } from "./fakes.js";
@@ -60,13 +61,18 @@ describe("registro end-to-end", () => {
     expect(conversation).toContain("zona");
     expect(conversation).toContain("Revisa los datos antes de guardar");
 
-    // Llamo a createPerson exactamente una vez, con los datos correctos y SIN contacto.
-    expect(backend.createCalls).toHaveLength(1);
-    const data = backend.createCalls[0]?.data as Record<string, unknown>;
+    // Llamo a registerPerson exactamente una vez, con los datos correctos, SIN
+    // contacto de terceros, y vinculando el canal (plataforma + chatId como cadena).
+    expect(backend.registerCalls).toHaveLength(1);
+    expect(backend.createCalls).toHaveLength(0); // el flujo real NO usa createPerson.
+    const call = backend.registerCalls[0];
+    const data = call?.person as Record<string, unknown>;
     expect(data["nombre"]).toBe("Maria Sintetica");
     expect(data["edad"]).toBe(34);
     expect(data["fuente"]).toBe("propia");
     expect("contact_id" in data).toBe(false);
+    // El canal viaja al backend para vincular el registro al usuario.
+    expect(call?.channel).toEqual({ plataforma: "telegram", chatId: String(CHAT) });
 
     // El ultimo mensaje confirma el registro.
     expect(transport.allText()).toContain("Registrado");
@@ -103,6 +109,66 @@ describe("busqueda", () => {
 
     expect(backend.searchCalls).toHaveLength(1);
     expect(transport.allText()).toContain("No encontramos coincidencias");
+  });
+});
+
+describe("busqueda de mascotas", () => {
+  it("llama a searchPets con la query y envia los resultados publicos", async () => {
+    const backend = new FakeBackend({
+      petResults: [
+        publicPetFixture({ nombre: "Firulais", tipo: "perro", zona: "Zona Sur", score: 0.8 }),
+      ],
+    });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, CHAT, BUTTON.buscarMascota, "Firulais");
+
+    // El backend recibio la query por el canal de mascotas (no por el de personas).
+    expect(backend.petSearchCalls).toHaveLength(1);
+    expect(backend.petSearchCalls[0]?.query).toBe("Firulais");
+    expect(backend.searchCalls).toHaveLength(0);
+
+    const conversation = transport.allText();
+    expect(conversation).toContain("Firulais");
+    expect(conversation).toContain("Zona Sur");
+    expect(conversation).toContain("similitud: 80%");
+  });
+
+  it("muestra el mensaje de sin resultados cuando no hay coincidencias", async () => {
+    const backend = new FakeBackend({ petResults: [] });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, CHAT, BUTTON.buscarMascota, "Nadie");
+
+    expect(backend.petSearchCalls).toHaveLength(1);
+    expect(transport.allText()).toContain("No encontramos mascotas");
+  });
+
+  it("responde amable y vuelve a idle si searchPets lanza", async () => {
+    const backend = new FakeBackend({ failSearchPets: true });
+    const { deps, transport, sessions } = makeDeps(backend);
+
+    await expect(send(deps, CHAT, BUTTON.buscarMascota, "Algo")).resolves.toBeUndefined();
+
+    expect(backend.petSearchCalls).toHaveLength(1);
+    expect(transport.allText()).toContain("No pudimos completar la busqueda");
+    expect(sessions.get(CHAT)).toEqual({ flow: "idle" });
+  });
+
+  it("nunca filtra contact_id aunque el backend devuelva una mascota contaminada", async () => {
+    const backend = new FakeBackend({
+      petResults: [
+        publicPetFixture({ nombre: "Mascota Filtrada", contact_id: SYNTH_CONTACT_ID }),
+      ],
+    });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, CHAT, BUTTON.buscarMascota, "Mascota");
+
+    const conversation = transport.allText();
+    expect(conversation).not.toContain(SYNTH_CONTACT_ID);
+    expect(conversation).not.toContain("contact_id");
+    expect(conversation).toContain("Mascota Filtrada");
   });
 });
 
@@ -194,7 +260,7 @@ describe("manejo de errores del backend", () => {
       ),
     ).resolves.toBeUndefined();
 
-    expect(backend.createCalls).toHaveLength(1);
+    expect(backend.registerCalls).toHaveLength(1);
     // La maquina vuelve a ofrecer confirmar con un mensaje amable (sin detalles internos).
     const conversation = transport.allText();
     expect(conversation).toContain("No pudimos guardar el registro");
@@ -214,20 +280,52 @@ describe("manejo de errores del backend", () => {
   });
 });
 
-describe("borrado (slice siguiente)", () => {
-  it("responde que el borrado estara disponible pronto y vuelve a idle, sin llamar al backend", async () => {
+describe("borrado seguro por canal", () => {
+  const SYNTH_ID = "11111111-1111-4111-8111-111111111111";
+
+  it("borra de verdad cuando el canal es el dueno: llama a deleteByChannel con la identidad y confirma", async () => {
     const backend = new FakeBackend();
     const { deps, transport, sessions } = makeDeps(backend);
 
-    // El id sintetico es un uuid valido para que la maquina llegue a confirmar.
-    await send(deps, CHAT, BUTTON.borrar, "11111111-1111-4111-8111-111111111111", BUTTON.confirmar);
+    await send(deps, CHAT, BUTTON.borrar, SYNTH_ID, BUTTON.confirmar);
 
-    expect(transport.allText()).toContain("El borrado estara disponible muy pronto");
-    // No se ejecuto ningun efecto contra el backend.
-    expect(backend.createCalls).toHaveLength(0);
-    expect(backend.searchCalls).toHaveLength(0);
-    // Vuelve a idle.
+    // Se llamo al borrado seguro con el id y la identidad del canal (chatId como cadena).
+    expect(backend.deleteCalls).toHaveLength(1);
+    expect(backend.deleteCalls[0]?.personId).toBe(SYNTH_ID);
+    expect(backend.deleteCalls[0]?.channel).toEqual({
+      plataforma: "telegram",
+      chatId: String(CHAT),
+    });
+
+    // La maquina confirma el borrado y vuelve a idle.
+    expect(transport.allText()).toContain("Registro borrado");
     expect(sessions.get(CHAT)).toEqual({ flow: "idle" });
+  });
+
+  it("ante un 403 (no es el dueno) responde el fallo amable sin revelar la causa", async () => {
+    const backend = new FakeBackend({ deleteNotOwner: true });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, CHAT, BUTTON.borrar, SYNTH_ID, BUTTON.confirmar);
+
+    expect(backend.deleteCalls).toHaveLength(1);
+    // Mensaje generico de la maquina (no confirma existencia ni pertenencia a un tercero).
+    const conversation = transport.allText();
+    expect(conversation).toContain("No pudimos borrar el registro");
+    expect(conversation).not.toContain("403");
+    expect(conversation).not.toContain("dueno");
+  });
+
+  it("no crashea si el borrado falla por un error transitorio del backend", async () => {
+    const backend = new FakeBackend({ failDelete: true });
+    const { deps, transport } = makeDeps(backend);
+
+    await expect(
+      send(deps, CHAT, BUTTON.borrar, SYNTH_ID, BUTTON.confirmar),
+    ).resolves.toBeUndefined();
+
+    expect(backend.deleteCalls).toHaveLength(1);
+    expect(transport.allText()).toContain("No pudimos borrar el registro");
   });
 });
 

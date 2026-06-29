@@ -9,6 +9,7 @@ export {
   confirmButtons,
   skipButtons,
   searchResults,
+  searchPetResults,
   registerSummary,
   deleteConfirm,
 } from "./messages.js";

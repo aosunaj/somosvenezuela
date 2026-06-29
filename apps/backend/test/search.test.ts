@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
 import {
+  makeFakeMatchRepo,
   makeFakePersonRepo,
   makeFakeSearchRepo,
   makeRepoCalls,
@@ -20,6 +21,7 @@ beforeEach(async () => {
     {
       personRepo: makeFakePersonRepo(calls),
       searchRepo: makeFakeSearchRepo(calls),
+      matchRepo: makeFakeMatchRepo(calls),
       serviceToken: "token-de-servicio-sintetico",
     },
     { rateLimitMax: 1000 },

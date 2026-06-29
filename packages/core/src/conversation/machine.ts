@@ -23,12 +23,14 @@ import {
 const CMD_START = "/start";
 const CMD_HELP = "/ayuda";
 const CMD_CANCEL = "/cancelar";
+const CMD_PET = "/mascota";
 
 // Etiquetas de menu que, como texto, equivalen a elegir una opcion. Permite que
 // el adaptador mande el texto del boton sin tener que mapearlo a un comando.
-const MENU_TEXT: Record<string, "register" | "search" | "delete" | "help"> = {
+const MENU_TEXT: Record<string, "register" | "search" | "search_pets" | "delete" | "help"> = {
   [M.BUTTON.registrar.toLowerCase()]: "register",
   [M.BUTTON.buscar.toLowerCase()]: "search",
+  [M.BUTTON.buscarMascota.toLowerCase()]: "search_pets",
   [M.BUTTON.borrar.toLowerCase()]: "delete",
   [M.BUTTON.ayuda.toLowerCase()]: "help",
 };
@@ -66,6 +68,9 @@ function handleGlobalCommand(command: string): StepResult | null {
     case CMD_CANCEL:
       // /cancelar limpia cualquier draft y vuelve a idle (requisito MVP).
       return toMenu(M.CANCELLED);
+    case CMD_PET:
+      // Atajo explicito para entrar directo a la busqueda de mascotas.
+      return startFlow("search_pets");
     default:
       return null;
   }
@@ -78,7 +83,9 @@ function startFlowFromText(text: string): StepResult | null {
   return startFlow(choice);
 }
 
-function startFlow(choice: "register" | "search" | "delete" | "help"): StepResult {
+type FlowChoice = "register" | "search" | "search_pets" | "delete" | "help";
+
+function startFlow(choice: FlowChoice): StepResult {
   switch (choice) {
     case "register":
       return result(
@@ -87,6 +94,11 @@ function startFlow(choice: "register" | "search" | "delete" | "help"): StepResul
       );
     case "search":
       return result({ flow: "search", step: "query" }, [reply(M.SEARCH_ASK_QUERY)]);
+    case "search_pets":
+      return result(
+        { flow: "search_pets", step: "query" },
+        [reply(M.SEARCH_PET_ASK_QUERY)],
+      );
     case "delete":
       return result({ flow: "delete", step: "id" }, [reply(M.DELETE_ASK_ID)]);
     case "help":
@@ -118,6 +130,8 @@ export function step(state: ConversationState, input: ConversationInput): StepRe
       return stepRegister(state, input);
     case "search":
       return stepSearch(state, input);
+    case "search_pets":
+      return stepSearchPets(state, input);
     case "delete":
       return stepDelete(state, input);
   }
@@ -331,6 +345,39 @@ function stepSearch(state: SearchState, input: FlowInput): StepResult {
     { flow: "search", step: "searching", query },
     [],
     { type: "search_persons", query },
+  );
+}
+
+// ── Flujo: buscar mascota ─────────────────────────────────────────────────────
+
+type SearchPetsState = Extract<ConversationState, { flow: "search_pets" }>;
+
+function stepSearchPets(state: SearchPetsState, input: FlowInput): StepResult {
+  if (input.kind === "effect_result") {
+    if (state.step !== "searching" || input.result.type !== "search_pets") {
+      return result({ flow: "search_pets", step: "query" }, [reply(M.SEARCH_PET_ASK_QUERY)]);
+    }
+    const { results } = input.result;
+    const text = results.length === 0 ? M.SEARCH_PET_NO_RESULTS : M.searchPetResults(results);
+    // Tras mostrar resultados volvemos a idle con el menu.
+    return result(initialState, [reply(text), reply(M.WELCOME, M.menuButtons())]);
+  }
+
+  // input.kind === 'text'
+  if (state.step === "searching") {
+    // Esperando resultados; ignoramos texto.
+    return result(state, []);
+  }
+  const query = input.text.trim();
+  if (query.length === 0) {
+    return result({ flow: "search_pets", step: "query" }, [reply(M.SEARCH_PET_INVALID_QUERY)]);
+  }
+  // Emite el efecto; el adaptador buscara y re-inyectara los resultados.
+  // No incluimos contacto: la busqueda usa la vista publica (guardrail #1).
+  return result(
+    { flow: "search_pets", step: "searching", query },
+    [],
+    { type: "search_pets", query },
   );
 }
 

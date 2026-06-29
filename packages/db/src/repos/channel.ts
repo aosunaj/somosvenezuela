@@ -40,11 +40,26 @@ function rowToChannel(row: ChannelRow): Channel {
   };
 }
 
+/**
+ * Direccion de transporte de un canal: SOLO (plataforma, chat_id). Es lo minimo
+ * que un bot necesita para entregar; NO incluye contact_id ni telefono. Sirve para
+ * enriquecer la cola de notificaciones sin reintroducir PII de contacto.
+ */
+export interface ChannelTransport {
+  plataforma: PlataformaCanal;
+  chat_id: string;
+}
+
 export interface ChannelRepo {
   /** ESCRITURA INTERNA. Crea un canal para un contacto. Solo backend. */
   create(input: ChannelCreate): Promise<Channel>;
   /** LECTURA INTERNA. Lista los canales de un contacto (para notificar). Solo backend. */
   listByContact(contactId: string): Promise<Channel[]>;
+  /**
+   * LECTURA INTERNA. Resuelve la direccion de transporte (plataforma, chat_id) de
+   * un canal por id, o null. Solo expone lo necesario para entregar; NO contact_id.
+   */
+  getTransport(id: string): Promise<ChannelTransport | null>;
   /** BORRADO (derecho al olvido). Elimina un canal por id. */
   remove(id: string): Promise<void>;
 }
@@ -81,6 +96,18 @@ export function createChannelRepo(client: DbClient): ChannelRepo {
 
       if (error) throw new DbError(`No se pudieron listar los canales: ${error.message}`, error.code);
       return (data ?? []).map(rowToChannel);
+    },
+
+    async getTransport(id: string): Promise<ChannelTransport | null> {
+      // Selecciona SOLO la direccion de transporte: jamas contact_id ni telefono.
+      const { data, error } = await client
+        .from("channels")
+        .select("plataforma, chat_id")
+        .eq("id", id)
+        .maybeSingle<ChannelTransport>();
+
+      if (error) throw new DbError(`No se pudo resolver el canal: ${error.message}`, error.code);
+      return data ?? null;
     },
 
     async remove(id: string): Promise<void> {

@@ -9,7 +9,15 @@ import {
   type StepResult,
 } from "core";
 import { whatsappWebhookSchema } from "./whatsapp-types.js";
-import type { BackendClient, SessionStore, WhatsAppTransport } from "./ports.js";
+import type {
+  BackendClient,
+  ChannelIdentity,
+  SessionStore,
+  WhatsAppTransport,
+} from "./ports.js";
+
+/** Plataforma fija de este adaptador (el backend la usa para el vinculo del canal). */
+const PLATAFORMA = "whatsapp" as const;
 
 // Orquestador del adaptador: pega la maquina de `core` con WhatsApp y el backend.
 // Espejo del orquestador de Telegram; reutiliza la MISMA maquina compartida.
@@ -30,10 +38,6 @@ export interface UpdateDeps {
   readonly backend: BackendClient;
   readonly sessions: SessionStore;
 }
-
-// Mensaje amable cuando el borrado todavia no esta disponible (slice siguiente).
-const DELETE_NOT_AVAILABLE =
-  "El borrado estara disponible muy pronto. Por ahora puedo ayudarte a registrar o buscar.";
 
 // Mensaje amable ante un fallo de busqueda (no filtra detalles internos).
 const SEARCH_FAILED =
@@ -107,7 +111,10 @@ async function runConversation(
   }
 
   // Hay un efecto: lo ejecutamos y re-inyectamos su resultado en la maquina.
-  await runEffect(waId, result, deps);
+  // La identidad del canal (plataforma + wa_id, que ya es cadena) viaja al backend
+  // para vincular registros/busquedas al usuario y autorizar su borrado.
+  const channel: ChannelIdentity = { plataforma: PLATAFORMA, chatId: waId };
+  await runEffect(waId, channel, result, deps);
 }
 
 /**
@@ -116,6 +123,7 @@ async function runConversation(
  */
 async function runEffect(
   waId: string,
+  channel: ChannelIdentity,
   pending: StepResult,
   deps: UpdateDeps,
 ): Promise<void> {
@@ -125,17 +133,7 @@ async function runEffect(
     return;
   }
 
-  // El borrado seguro es el slice siguiente: requiere el vinculo usuario<->canal
-  // (tabla `channels` + opt_in) para autorizar que el dueno borre su registro.
-  // Hasta entonces NO ejecutamos delete_person: respondemos amable y volvemos a
-  // idle, descartando el estado de borrado pendiente.
-  if (effect.type === "delete_person") {
-    await deps.transport.sendMessage(waId, DELETE_NOT_AVAILABLE);
-    deps.sessions.set(waId, initialState);
-    return;
-  }
-
-  const effectResult = await executeEffect(effect, deps.backend);
+  const effectResult = await executeEffect(effect, channel, deps.backend);
   if (effectResult === null) {
     // Fallo del backend ya comunicado al usuario; volvemos a idle sin re-inyectar.
     await deps.transport.sendMessage(waId, SEARCH_FAILED);
@@ -157,17 +155,21 @@ async function runEffect(
  * Devuelve `null` SOLO cuando el fallo no se puede representar como resultado de la
  * maquina (p. ej. la busqueda lanza); en ese caso el llamador responde amable.
  *
- * NUNCA pide ni procesa `contact_id`: create_person manda lo que arma la maquina (sin
- * contacto) y search_persons recibe la vista publica.
+ * NUNCA pide ni procesa `contact_id`: registrar/buscar mandan lo que arma la maquina
+ * (sin contacto de terceros) y las busquedas reciben la vista publica. El vinculo
+ * usuario<->canal viaja en `channel` para que el backend autorice el borrado y pueda
+ * notificar despues por el canal correcto.
  */
 async function executeEffect(
-  effect: Exclude<Effect, { type: "delete_person" }>,
+  effect: Effect,
+  channel: ChannelIdentity,
   backend: BackendClient,
 ): Promise<EffectResult | null> {
   switch (effect.type) {
     case "create_person": {
       try {
-        await backend.createPerson(effect.data);
+        // Registro VINCULADO al canal: el backend persiste channel + opt_in.
+        await backend.registerPerson(effect.data, channel);
         return { type: "create_person", ok: true };
       } catch {
         // Fallo de alta: la maquina sabe re-pedir confirmacion con REGISTER_FAILED.
@@ -177,11 +179,33 @@ async function executeEffect(
     }
     case "search_persons": {
       try {
-        const results = await backend.searchPersons(effect.query, effect.zona);
+        // Pasamos el canal para vincular al buscador (lo notificaremos si hay match).
+        const results = await backend.searchPersons(effect.query, effect.zona, channel);
         return { type: "search_persons", results };
       } catch {
         // La maquina no modela "busqueda fallida"; lo gestiona el adaptador (null).
         return null;
+      }
+    }
+    case "search_pets": {
+      try {
+        const results = await backend.searchPets(effect.query, effect.zona);
+        return { type: "search_pets", results };
+      } catch {
+        // Igual que personas: el fallo de busqueda lo gestiona el adaptador (null).
+        return null;
+      }
+    }
+    case "delete_person": {
+      try {
+        // El backend autoriza con el vinculo del canal (solo el dueno puede borrar).
+        await backend.deleteByChannel(effect.personId, channel);
+        return { type: "delete_person", ok: true };
+      } catch {
+        // 403 (no es el dueno) y cualquier otro fallo se modelan IGUAL como ok:false:
+        // la maquina muestra DELETE_FAILED sin revelar si el registro existe ni de
+        // quien es (guardrail #1: no confirmar pertenencia a un tercero).
+        return { type: "delete_person", ok: false };
       }
     }
   }
