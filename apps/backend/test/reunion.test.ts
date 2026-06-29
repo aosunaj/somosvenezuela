@@ -211,6 +211,21 @@ describe("POST /reunion/request (el buscador inicia)", () => {
     expect(calls.notifications).toHaveLength(0);
   });
 
+  it("'already_handled' -> 200 status:failed y NO notifica (un 'no' firme, sin reabrir)", async () => {
+    // El repo dice que el reencuentro ya estaba gestionado (cerrado o en curso): la ruta
+    // responde generico 'failed' y NO encola un nuevo aviso al registrante.
+    buildWith({ outcome: "already_handled" }, RESPOND_NOOP);
+    await app.ready();
+    const res = await app.inject({
+      method: "POST",
+      url: "/reunion/request",
+      payload: { channel: BUSCADOR_CHANNEL_ID, personId: PERSON_ID },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: "failed" });
+    expect(calls.notifications).toHaveLength(0);
+  });
+
   it("'not_found' -> 200 status:failed (generico, sin revelar nada)", async () => {
     buildWith({ outcome: "not_found" }, RESPOND_NOOP);
     await app.ready();

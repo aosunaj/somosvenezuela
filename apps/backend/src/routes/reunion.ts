@@ -181,8 +181,10 @@ export function registerReunionRoutes(app: FastifyInstance, deps: ReunionDeps): 
         // Guardrail #2: caso de menor, no se conecta automaticamente.
         return reply.code(200).send({ status: "minor" });
       }
-      if (outcome.outcome === "not_found") {
-        // Sin match buscador<->persona: generico, sin revelar si existe el registro.
+      if (outcome.outcome === "not_found" || outcome.outcome === "already_handled") {
+        // Sin match, o reencuentro YA gestionado (cerrado por rechazo/intercambio o en
+        // curso): respuesta GENERICA 'failed'. No reabrimos un "no" firme ni revelamos
+        // si existe el registro, si ya fue rechazado, o si ya esta en marcha (guardrail #1).
         return reply.code(200).send({ status: "failed" });
       }
 
