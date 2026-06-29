@@ -83,6 +83,7 @@ export interface SearchCall {
   readonly query: string;
   readonly zona?: string;
   readonly channel?: ChannelIdentity;
+  readonly descripcion?: string;
 }
 
 export interface RequestReunionCall {
@@ -207,8 +208,9 @@ export class FakeBackend implements BackendClient {
     query: string,
     zona?: string,
     channel?: ChannelIdentity,
+    descripcion?: string,
   ): Promise<readonly PublicPersonResult[]> {
-    this.searchCalls.push(buildSearchCall(query, zona, channel));
+    this.searchCalls.push(buildSearchCall(query, zona, channel, descripcion));
     if (this.#opts.failSearch === true) {
       throw new Error("backend caido (sintetico)");
     }
@@ -270,10 +272,17 @@ function buildSearchCall(
   query: string,
   zona?: string,
   channel?: ChannelIdentity,
+  descripcion?: string,
 ): SearchCall {
-  const call: { query: string; zona?: string; channel?: ChannelIdentity } = { query };
+  const call: {
+    query: string;
+    zona?: string;
+    channel?: ChannelIdentity;
+    descripcion?: string;
+  } = { query };
   if (zona !== undefined) call.zona = zona;
   if (channel !== undefined) call.channel = channel;
+  if (descripcion !== undefined) call.descripcion = descripcion;
   return call;
 }
 

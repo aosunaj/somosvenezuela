@@ -39,6 +39,22 @@ async function send(deps: UpdateDeps, chatId: number, ...texts: string[]): Promi
   }
 }
 
+/**
+ * Secuencia de textos que completa la BUSQUEDA GUIADA con solo el nombre `query`
+ * (apellidos, edad, zona y senas omitidos), disparando la busqueda. Util para los
+ * tests que solo necesitan llegar a los resultados sin rellenar todos los campos.
+ */
+function searchByName(query: string): string[] {
+  return [
+    BUTTON.buscar,
+    query, // nombre
+    BUTTON.omitir, // apellidos
+    BUTTON.omitir, // edad
+    BUTTON.omitir, // zona
+    BUTTON.omitir, // senas -> dispara la busqueda
+  ];
+}
+
 describe("registro end-to-end", () => {
   it("recorre el flujo, pide cada dato y al confirmar llama a createPerson con los datos correctos", async () => {
     const backend = new FakeBackend();
@@ -136,8 +152,8 @@ describe("registro de mascota end-to-end", () => {
   });
 });
 
-describe("busqueda", () => {
-  it("llama a searchPersons con la query y envia los resultados publicos", async () => {
+describe("busqueda guiada", () => {
+  it("recorre el flujo guiado y llama a searchPersons con nombre+apellidos, zona y senas", async () => {
     const backend = new FakeBackend({
       searchResults: [
         publicPersonFixture({ nombre: "Jose Sintetico", zona: "Zona Sur", score: 0.9 }),
@@ -145,11 +161,23 @@ describe("busqueda", () => {
     });
     const { deps, transport } = makeDeps(backend);
 
-    await send(deps, CHAT, BUTTON.buscar, "Jose");
+    // Busqueda guiada: nombre -> apellidos -> edad (omitida) -> zona -> senas.
+    await send(
+      deps,
+      CHAT,
+      BUTTON.buscar, // inicia el flujo de busqueda guiada
+      "Jose", // nombre
+      "Sintetico", // apellidos
+      BUTTON.omitir, // edad
+      "Zona Sur", // zona
+      "chaqueta azul", // senas -> dispara la busqueda
+    );
 
-    // El backend recibio la query (sin contacto en el flujo).
+    // El backend recibio la query con nombre + apellidos juntos, la zona y las senas.
     expect(backend.searchCalls).toHaveLength(1);
-    expect(backend.searchCalls[0]?.query).toBe("Jose");
+    expect(backend.searchCalls[0]?.query).toBe("Jose Sintetico");
+    expect(backend.searchCalls[0]?.zona).toBe("Zona Sur");
+    expect(backend.searchCalls[0]?.descripcion).toBe("chaqueta azul");
 
     // Los resultados se mostraron con campos publicos.
     const conversation = transport.allText();
@@ -160,14 +188,62 @@ describe("busqueda", () => {
     expect(conversation).toContain("parecido: 90%");
   });
 
+  it("buscar con un solo dato (resto omitido) tambien dispara la busqueda", async () => {
+    const backend = new FakeBackend({ searchResults: [] });
+    const { deps } = makeDeps(backend);
+
+    await send(
+      deps,
+      CHAT,
+      BUTTON.buscar,
+      "Nadie", // nombre
+      BUTTON.omitir, // apellidos
+      BUTTON.omitir, // edad
+      BUTTON.omitir, // zona
+      BUTTON.omitir, // senas -> con solo el nombre ya busca
+    );
+
+    expect(backend.searchCalls).toHaveLength(1);
+    expect(backend.searchCalls[0]?.query).toBe("Nadie");
+  });
+
   it("muestra el mensaje de sin resultados cuando el backend no devuelve nada", async () => {
     const backend = new FakeBackend({ searchResults: [] });
     const { deps, transport } = makeDeps(backend);
 
-    await send(deps, CHAT, BUTTON.buscar, "Nadie");
+    await send(
+      deps,
+      CHAT,
+      BUTTON.buscar,
+      "Nadie",
+      BUTTON.omitir,
+      BUTTON.omitir,
+      BUTTON.omitir,
+      BUTTON.omitir,
+    );
 
     expect(backend.searchCalls).toHaveLength(1);
     expect(transport.allText()).toContain("No encontramos coincidencias");
+  });
+
+  it("omitir TODO no busca con vacio: pide al menos un dato (no llama al backend)", async () => {
+    const backend = new FakeBackend({ searchResults: [] });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(
+      deps,
+      CHAT,
+      BUTTON.buscar,
+      BUTTON.omitir, // nombre
+      BUTTON.omitir, // apellidos
+      BUTTON.omitir, // edad
+      BUTTON.omitir, // zona
+      BUTTON.omitir, // senas -> todo vacio
+    );
+
+    // No se busca con vacio: el backend NO se llama y se pide al menos un dato.
+    expect(backend.searchCalls).toHaveLength(0);
+    expect(transport.allText()).toContain("al menos un dato");
   });
 });
 
@@ -370,7 +446,7 @@ describe("privacidad: nunca sale dato de contacto", () => {
     });
     const { deps, transport } = makeDeps(backend);
 
-    await send(deps, CHAT, BUTTON.buscar, "Persona");
+    await send(deps, CHAT, ...searchByName("Persona"));
 
     // Ningun mensaje enviado contiene el contacto contaminante.
     const conversation = transport.allText();
@@ -414,7 +490,7 @@ describe("manejo de errores del backend", () => {
     const backend = new FakeBackend({ failSearch: true });
     const { deps, transport, sessions } = makeDeps(backend);
 
-    await expect(send(deps, CHAT, BUTTON.buscar, "Algo")).resolves.toBeUndefined();
+    await expect(send(deps, CHAT, ...searchByName("Algo"))).resolves.toBeUndefined();
 
     expect(backend.searchCalls).toHaveLength(1);
     expect(transport.allText()).toContain("No pudimos completar la busqueda");
@@ -529,8 +605,8 @@ describe("reencuentro: el buscador elige a quien conectar", () => {
     });
     const { deps, transport } = makeDeps(backend);
 
-    // Busca, ve resultados, y elige el 1 para conectar.
-    await send(deps, CHAT, BUTTON.buscar, "Jose", "1");
+    // Busca (flujo guiado), ve resultados, y elige el 1 para conectar.
+    await send(deps, CHAT, ...searchByName("Jose"), "1");
 
     // Llamo a requestReunion con el id publico de la persona elegida y el canal.
     expect(backend.requestReunionCalls).toHaveLength(1);
@@ -553,7 +629,7 @@ describe("reencuentro: el buscador elige a quien conectar", () => {
     });
     const { deps, transport } = makeDeps(backend);
 
-    await send(deps, CHAT, BUTTON.buscar, "Menor", "1");
+    await send(deps, CHAT, ...searchByName("Menor"), "1");
 
     expect(backend.requestReunionCalls).toHaveLength(1);
     expect(transport.allText().toLowerCase()).toContain("entidad verificada");
@@ -566,7 +642,7 @@ describe("reencuentro: el buscador elige a quien conectar", () => {
     });
     const { deps, transport } = makeDeps(backend);
 
-    await expect(send(deps, CHAT, BUTTON.buscar, "Jose", "1")).resolves.toBeUndefined();
+    await expect(send(deps, CHAT, ...searchByName("Jose"), "1")).resolves.toBeUndefined();
 
     expect(backend.requestReunionCalls).toHaveLength(1);
     const conversation = transport.allText();
@@ -580,7 +656,7 @@ describe("reencuentro: el buscador elige a quien conectar", () => {
     });
     const { deps, sessions } = makeDeps(backend);
 
-    await send(deps, CHAT, BUTTON.buscar, "Jose", "9");
+    await send(deps, CHAT, ...searchByName("Jose"), "9");
 
     expect(backend.requestReunionCalls).toHaveLength(0);
     expect(sessions.get(CHAT)).toEqual({ flow: "idle" });
