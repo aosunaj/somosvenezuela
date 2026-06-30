@@ -1,10 +1,13 @@
 import type { OwnedPerson, PublicNeed, PublicZone } from "core";
 import {
   NotOwnerError,
+  type ActiveRelayInfo,
   type BackendClient,
   type ChannelIdentity,
+  type ForwardRelayCall as ForwardRelayCallType,
   type PublicPersonResult,
   type PublicPetResult,
+  type RescatadoStatus,
   type ReunionConsentStatus,
   type ReunionDecision,
   type ReunionRequestStatus,
@@ -88,6 +91,8 @@ export interface SearchCall {
   readonly zona?: string;
   readonly channel?: ChannelIdentity;
   readonly descripcion?: string;
+  /** es_menor flag forwarded from the machine (R2-4a / judgment-r3 item 5). */
+  readonly es_menor?: boolean;
 }
 
 export interface RequestReunionCall {
@@ -97,6 +102,11 @@ export interface RequestReunionCall {
 
 export interface ReunionConsentCall {
   readonly decision: ReunionDecision;
+  readonly channel: ChannelIdentity;
+}
+
+export interface CloseRelayCall {
+  readonly relayId: string;
   readonly channel: ChannelIdentity;
 }
 
@@ -141,6 +151,20 @@ interface FakeBackendOptions {
   readonly failReunionConsent?: boolean;
   /** Id que devuelve `createPerson`/`registerPerson` cuando no falla. */
   readonly createdId?: string;
+  /** Relay activo que devuelve `getActiveRelay` (null = sin relay). */
+  readonly activeRelay?: ActiveRelayInfo | null;
+  /** Si true, `closeRelay` lanza (para probar el fallo). */
+  readonly closeRelayFails?: boolean;
+  /** Estado que devuelve `reportRescatado` (por defecto 'queued'). */
+  readonly reportRescatadoStatus?: RescatadoStatus;
+  /** Si true, `reportRescatado` lanza un error generico. */
+  readonly failReportRescatado?: boolean;
+}
+
+/** Captura de una llamada a reportRescatado. */
+export interface ReportRescatadoCall {
+  readonly personId: string;
+  readonly channel: ChannelIdentity;
 }
 
 export class FakeBackend implements BackendClient {
@@ -154,9 +178,14 @@ export class FakeBackend implements BackendClient {
   readonly petSearchCalls: SearchCall[] = [];
   readonly requestReunionCalls: RequestReunionCall[] = [];
   readonly reunionConsentCalls: ReunionConsentCall[] = [];
+  readonly forwardRelayMessageCalls: ForwardRelayCallType[] = [];
+  readonly closeRelayCalls: CloseRelayCall[] = [];
+  readonly sweepConsentCalls: number[] = [];
+  readonly reportRescatadoCalls: ReportRescatadoCall[] = [];
   /** Cuenta cuantas veces se llamo a cada lectura de mapa (sin argumentos). */
   listZonesCalls = 0;
   listNeedsCalls = 0;
+  getActiveRelayCalls = 0;
   readonly #opts: FakeBackendOptions;
 
   constructor(opts: FakeBackendOptions = {}) {
@@ -226,8 +255,9 @@ export class FakeBackend implements BackendClient {
     zona?: string,
     channel?: ChannelIdentity,
     descripcion?: string,
+    es_menor?: boolean,
   ): Promise<readonly PublicPersonResult[]> {
-    this.searchCalls.push(buildSearchCall(query, zona, channel, descripcion));
+    this.searchCalls.push(buildSearchCall(query, zona, channel, descripcion, es_menor));
     if (this.#opts.failSearch === true) {
       throw new Error("backend caido (sintetico)");
     }
@@ -282,6 +312,54 @@ export class FakeBackend implements BackendClient {
     }
     return this.#opts.needResults ?? [];
   }
+
+  async getActiveRelay(channel: ChannelIdentity): Promise<ActiveRelayInfo | null> {
+    void channel;
+    this.getActiveRelayCalls += 1;
+    return this.#opts.activeRelay ?? null;
+  }
+
+  async forwardRelayMessage(
+    relayId: string,
+    text: string,
+    channel: ChannelIdentity,
+  ): Promise<void> {
+    this.forwardRelayMessageCalls.push({ relayId, text, channel });
+  }
+
+  async closeRelay(relayId: string, channel: ChannelIdentity): Promise<void> {
+    this.closeRelayCalls.push({ relayId, channel });
+    if (this.#opts.closeRelayFails === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+  }
+
+  async sweepConsent(): Promise<void> {
+    this.sweepConsentCalls.push(1);
+  }
+
+  async respondConsent(
+    consentId: string,
+    decision: "aceptado" | "rechazado",
+    channel: ChannelIdentity,
+  ): Promise<void> {
+    void consentId;
+    void decision;
+    void channel;
+  }
+
+  async requestRelayReveal(relayId: string, channel: ChannelIdentity): Promise<void> {
+    void relayId;
+    void channel;
+  }
+
+  async reportRescatado(personId: string, channel: ChannelIdentity): Promise<RescatadoStatus> {
+    this.reportRescatadoCalls.push({ personId, channel });
+    if (this.#opts.failReportRescatado === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+    return this.#opts.reportRescatadoStatus ?? "queued";
+  }
 }
 
 /** Construye un SearchCall omitiendo claves opcionales ausentes (exactOptional). */
@@ -290,16 +368,19 @@ function buildSearchCall(
   zona?: string,
   channel?: ChannelIdentity,
   descripcion?: string,
+  es_menor?: boolean,
 ): SearchCall {
   const call: {
     query: string;
     zona?: string;
     channel?: ChannelIdentity;
     descripcion?: string;
+    es_menor?: boolean;
   } = { query };
   if (zona !== undefined) call.zona = zona;
   if (channel !== undefined) call.channel = channel;
   if (descripcion !== undefined) call.descripcion = descripcion;
+  if (es_menor !== undefined) call.es_menor = es_menor;
   return call;
 }
 

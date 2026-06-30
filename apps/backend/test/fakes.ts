@@ -162,12 +162,20 @@ export function makeFakeSearchRepo(calls: RepoCalls): SearchRepo {
         zona: input.zona ?? null,
         // SENSIBLE: presente en el registro interno; nunca en la respuesta publica.
         buscador_contact_id: input.buscador_contact_id ?? SYNTH_CONTACT_ID,
+        es_menor: input.es_menor ?? false,
         created_at: "2026-01-01T00:00:00.000Z",
       };
       return search;
     },
     async getById() {
       return null;
+    },
+    // Conservative minor check — returns false in tests unless overridden.
+    async isMinorByContactId(_contactId: string): Promise<boolean> {
+      return false;
+    },
+    async listOpenMatchingReport() {
+      return [];
     },
   };
 }

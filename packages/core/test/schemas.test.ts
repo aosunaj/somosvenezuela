@@ -12,13 +12,14 @@ import {
 } from "../src/index.js";
 
 describe("enums espejados de 0001_init.sql", () => {
-  it("estado_persona tiene exactamente los 5 valores del esquema", () => {
+  it("estado_persona tiene exactamente los 6 valores del esquema (0001_init + 0007_estado_a_salvo)", () => {
     expect(estadoPersonaSchema.options).toEqual([
       "desaparecida",
       "encontrada_viva",
       "encontrada_herida",
       "fallecida",
       "reunida",
+      "a_salvo",
     ]);
   });
 

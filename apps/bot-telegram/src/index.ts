@@ -40,6 +40,11 @@ const envSchema = z.object({
   // Token de servicio para leer/marcar notificaciones del backend. OPCIONAL: si no
   // esta, el bot funciona igual pero NO entrega notificaciones (el poller no arranca).
   SERVICE_TOKEN: z.string().min(1).optional(),
+  // Secreto compartido bot<->backend para las rutas by-channel del Modelo B
+  // (consent/respond, relay/close, rescatado). Viaja en el header x-bot-secret. En
+  // produccion DEBE coincidir con el BOT_BACKEND_SECRET del backend (Render). Nunca
+  // se imprime. OPCIONAL en dev/test; el backend lo exige solo si esta configurado.
+  BOT_BACKEND_SECRET: z.string().min(1).optional(),
   // Intervalo del poller de notificaciones en ms. OPCIONAL: por defecto 5000.
   NOTIFICATIONS_POLL_INTERVAL_MS: z.coerce.number().int().positive().optional(),
   // URL publica para el webhook. OPCIONAL: si falta, se intenta RENDER_EXTERNAL_URL.
@@ -64,6 +69,8 @@ interface Env {
   readonly telegramBotToken: string;
   readonly backendUrl: string;
   readonly serviceToken?: string;
+  /** Secreto compartido bot<->backend para las rutas del Modelo B (x-bot-secret). */
+  readonly botSecret?: string;
   readonly pollIntervalMs: number;
   /** URL publica del propio bot (sin barra final). Si existe, corremos en modo webhook. */
   readonly publicUrl?: string;
@@ -103,6 +110,7 @@ function loadEnv(): Env {
     backendUrl: parsed.data.BACKEND_URL,
     pollIntervalMs: parsed.data.NOTIFICATIONS_POLL_INTERVAL_MS ?? DEFAULT_POLL_INTERVAL_MS,
     ...(parsed.data.SERVICE_TOKEN !== undefined ? { serviceToken: parsed.data.SERVICE_TOKEN } : {}),
+    ...(parsed.data.BOT_BACKEND_SECRET !== undefined ? { botSecret: parsed.data.BOT_BACKEND_SECRET } : {}),
     ...(publicUrlRaw !== undefined ? { publicUrl: publicUrlRaw.replace(/\/+$/, "") } : {}),
     ...(parsed.data.WEBHOOK_SECRET !== undefined ? { webhookSecret: parsed.data.WEBHOOK_SECRET } : {}),
   };
@@ -366,7 +374,7 @@ async function main(): Promise<void> {
   const transport = new HttpTelegramTransport(env.telegramBotToken);
   const deps: UpdateDeps = {
     transport,
-    backend: new HttpBackendClient(env.backendUrl),
+    backend: new HttpBackendClient(env.backendUrl, env.botSecret),
     sessions: new InMemorySessionStore(),
   };
 

@@ -1,15 +1,21 @@
 import { z } from "zod";
 
-// Enums del dominio, espejados EXACTAMENTE de migrations/0001_init.sql.
-// No inventar valores: cualquier divergencia rompe la integridad con la BD.
+// Enums del dominio, espejados EXACTAMENTE de migrations/0001_init.sql
+// y migraciones sucesivas. No inventar valores: cualquier divergencia rompe
+// la integridad con la BD.
 
-/** estado_persona: ciclo de vida de una persona/mascota registrada. */
+/** estado_persona: ciclo de vida de una persona/mascota registrada.
+ * Valores: 0001_init.sql (base) + 0007_estado_a_salvo.sql ('a_salvo').
+ * 'a_salvo': persona confirmada segura pero no reunida formalmente. SOLO
+ * puede setearse con confirmación humana (assertEstadoASalvoValido) — NUNCA
+ * de forma automática (guardrail #4 / R2-2c). */
 export const estadoPersonaSchema = z.enum([
   "desaparecida",
   "encontrada_viva",
   "encontrada_herida",
   "fallecida",
   "reunida",
+  "a_salvo",
 ]);
 export type EstadoPersona = z.infer<typeof estadoPersonaSchema>;
 

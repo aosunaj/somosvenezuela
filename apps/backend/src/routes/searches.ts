@@ -90,9 +90,21 @@ export function registerSearchesRoutes(app: FastifyInstance, deps: AppDeps): voi
         buscadorContactId = link.contactId;
       }
 
+      // judgment-r3 item 5: establecer es_menor server-side de forma conservadora.
+      // isMinorByContactId retorna true cuando el contacto no puede confirmarse como
+      // positivamente adulto (edad=null, 0 personas, any menor). Este resultado NUNCA
+      // puede ser cancelado por un false del cliente (additive-only: OR conservativo).
+      let esMenorServerSide = searchInput.es_menor ?? false;
+      if (buscadorContactId !== null && searchInput.tipo === "persona") {
+        const contactIsMinor = await deps.searchRepo.isMinorByContactId(buscadorContactId);
+        // OR conservativo: si el server dice true, es true independientemente del cliente.
+        esMenorServerSide = contactIsMinor || esMenorServerSide;
+      }
+
       const busqueda = await deps.searchRepo.create({
         ...searchInput,
         buscador_contact_id: buscadorContactId,
+        es_menor: esMenorServerSide,
       });
 
       // Dispara el matching para busquedas de persona con CUALQUIER criterio

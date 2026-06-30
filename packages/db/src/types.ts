@@ -105,6 +105,8 @@ export interface SearchRow {
   target_descripcion: string | null;
   zona: string | null;
   buscador_contact_id: string | null;
+  /** Señal de menor (conservativa). Default false. */
+  es_menor: boolean;
   created_at: string;
 }
 

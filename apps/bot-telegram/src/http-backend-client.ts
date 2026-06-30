@@ -9,10 +9,12 @@ import { z } from "zod";
 import type { OwnedPerson, PublicNeed, PublicZone } from "core";
 import {
   NotOwnerError,
+  type ActiveRelayInfo,
   type BackendClient,
   type ChannelIdentity,
   type PublicPersonResult,
   type PublicPetResult,
+  type RescatadoStatus,
   type ReunionConsentStatus,
   type ReunionDecision,
   type ReunionRequestStatus,
@@ -28,7 +30,15 @@ import {
 //   POST   `${BACKEND_URL}/searches`                -> busca persona, vincula al buscador.
 //   GET    `${BACKEND_URL}/search/pets`             -> busca mascotas (vista publica).
 //   GET    `${BACKEND_URL}/zones`                   -> lista zonas publicas (mapa).
+//   Relay (F4):
+//   GET    `${BACKEND_URL}/relay/active`            -> consulta relay activo del canal.
+//   POST   `${BACKEND_URL}/relay/:id/forward`       -> reenviar mensaje por relay (cola).
+//   POST   `${BACKEND_URL}/relay/:id/close`         -> cerrar relay ambas partes.
+//   POST   `${BACKEND_URL}/consent/:id/respond`     -> responder consent session.
+//   POST   `${BACKEND_URL}/relay/:id/reveal`        -> solicitar revelacion bilateral.
+//   POST   `${BACKEND_URL}/consent/sweep`           -> expirar consent sessions vencidos.
 //   GET    `${BACKEND_URL}/needs`                   -> lista necesidades publicas (mapa).
+//   POST   `${BACKEND_URL}/rescatado`               -> reportar persona encontrada (Slice D).
 //
 // Tipamos/validamos las respuestas con los schemas de `core` para no confiar
 // ciegamente en el backend. JAMAS pedimos ni leemos contact_id: el contrato del
@@ -85,10 +95,28 @@ const reunionConsentResponseSchema = z.object({
 
 export class HttpBackendClient implements BackendClient {
   readonly #baseUrl: string;
+  readonly #botSecret: string | undefined;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, botSecret?: string) {
     // Normalizamos la base para evitar dobles barras al concatenar rutas.
     this.#baseUrl = baseUrl.replace(/\/+$/, "");
+    // Secreto compartido bot<->backend para las rutas by-channel del Modelo B
+    // (consent/respond, relay/close, rescatado). Se lee de BOT_BACKEND_SECRET en el
+    // arranque del bot y viaja en el header x-bot-secret de esas llamadas. NUNCA se
+    // imprime ni se expone.
+    this.#botSecret = botSecret;
+  }
+
+  /**
+   * Headers para las rutas del Modelo B: content-type + el secreto compartido
+   * x-bot-secret (solo si esta configurado). El backend lo exige en fail-closed.
+   */
+  #modelBHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (this.#botSecret !== undefined && this.#botSecret.length > 0) {
+      headers["x-bot-secret"] = this.#botSecret;
+    }
+    return headers;
   }
 
   async createPerson(data: unknown): Promise<{ readonly id: string }> {
@@ -272,6 +300,7 @@ export class HttpBackendClient implements BackendClient {
     zona?: string,
     channel?: ChannelIdentity,
     descripcion?: string,
+    es_menor?: boolean,
   ): Promise<readonly PublicPersonResult[]> {
     const body: Record<string, unknown> = {
       tipo: "persona",
@@ -294,6 +323,12 @@ export class HttpBackendClient implements BackendClient {
     // notificarle despues si aparece una coincidencia (Capa 2: reunir familias).
     if (channel !== undefined) {
       body["channel"] = channel;
+    }
+    // es_menor: respuesta EXPLICITA del usuario al paso 'menor' (R2-4a).
+    // Solo se envia cuando el usuario respondio; el backend confirma server-side
+    // de forma conservadora (judgment-r3 item 5).
+    if (es_menor !== undefined) {
+      body["es_menor"] = es_menor;
     }
 
     const res = await fetch(`${this.#baseUrl}/searches`, {
@@ -359,5 +394,156 @@ export class HttpBackendClient implements BackendClient {
     const json: unknown = await res.json();
     const parsed = needsResponseSchema.parse(json);
     return parsed.needs;
+  }
+
+  // ── Relay methods (F4, design v3) ─────────────────────────────────────────
+
+  /** Schema for GET /relay/active response. */
+  static readonly #activeRelaySchema = z
+    .object({
+      relayId: z.string(),
+      otherChannelId: z.string(),
+    })
+    .nullable();
+
+  async getActiveRelay(channel: ChannelIdentity): Promise<ActiveRelayInfo | null> {
+    try {
+      const res = await fetch(`${this.#baseUrl}/relay/active`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          plataforma: channel.plataforma,
+          chatId: channel.chatId,
+        }),
+      });
+      if (!res.ok) return null;
+      const json: unknown = await res.json();
+      return HttpBackendClient.#activeRelaySchema.parse(json);
+    } catch {
+      // Network error or parse failure: treat as no relay (safe default).
+      return null;
+    }
+  }
+
+  async forwardRelayMessage(
+    relayId: string,
+    text: string,
+    channel: ChannelIdentity,
+  ): Promise<void> {
+    const res = await fetch(
+      `${this.#baseUrl}/relay/${encodeURIComponent(relayId)}/forward`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          text,
+          channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`POST /relay/:id/forward fallo con estado ${res.status}`);
+    }
+  }
+
+  async closeRelay(relayId: string, channel: ChannelIdentity): Promise<void> {
+    const res = await fetch(
+      `${this.#baseUrl}/relay/${encodeURIComponent(relayId)}/close`,
+      {
+        method: "POST",
+        // Ruta del Modelo B: incluye el secreto compartido x-bot-secret.
+        headers: this.#modelBHeaders(),
+        body: JSON.stringify({
+          channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`POST /relay/:id/close fallo con estado ${res.status}`);
+    }
+  }
+
+  async respondConsent(
+    consentId: string,
+    decision: "aceptado" | "rechazado",
+    channel: ChannelIdentity,
+  ): Promise<void> {
+    const res = await fetch(
+      `${this.#baseUrl}/consent/${encodeURIComponent(consentId)}/respond`,
+      {
+        method: "POST",
+        // Ruta del Modelo B: incluye el secreto compartido x-bot-secret.
+        headers: this.#modelBHeaders(),
+        body: JSON.stringify({
+          decision,
+          channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`POST /consent/:id/respond fallo con estado ${res.status}`);
+    }
+  }
+
+  async requestRelayReveal(relayId: string, channel: ChannelIdentity): Promise<void> {
+    const res = await fetch(
+      `${this.#baseUrl}/relay/${encodeURIComponent(relayId)}/reveal`,
+      {
+        method: "POST",
+        // Ruta del Modelo B: incluye el secreto compartido x-bot-secret.
+        headers: this.#modelBHeaders(),
+        body: JSON.stringify({
+          channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`POST /relay/:id/reveal fallo con estado ${res.status}`);
+    }
+  }
+
+  async sweepConsent(): Promise<void> {
+    const res = await fetch(`${this.#baseUrl}/consent/sweep`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+    if (!res.ok) {
+      throw new Error(`POST /consent/sweep fallo con estado ${res.status}`);
+    }
+  }
+
+  /** Schema for POST /rescatado response. */
+  static readonly #rescatadoResponseSchema = z.object({
+    outcome: z.enum(["queued", "human_review", "consent_pending", "operator_queue"]),
+  });
+
+  async reportRescatado(
+    personId: string,
+    channel: ChannelIdentity,
+  ): Promise<RescatadoStatus> {
+    try {
+      const res = await fetch(`${this.#baseUrl}/rescatado`, {
+        method: "POST",
+        // Ruta del Modelo B: incluye el secreto compartido x-bot-secret.
+        headers: this.#modelBHeaders(),
+        // Solo enviamos el id publico de la persona y el canal del buscador.
+        // NUNCA contact_id: el backend resuelve el vinculo por canal (guardrail #1).
+        body: JSON.stringify({
+          personId,
+          channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        }),
+      });
+      if (!res.ok) {
+        return "failed";
+      }
+      const json: unknown = await res.json();
+      const parsed = HttpBackendClient.#rescatadoResponseSchema.safeParse(json);
+      if (!parsed.success) {
+        return "failed";
+      }
+      return parsed.data.outcome;
+    } catch {
+      return "failed";
+    }
   }
 }

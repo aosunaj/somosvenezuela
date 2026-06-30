@@ -97,6 +97,7 @@ export function rowToSearch(row: SearchRow): Search {
     target_descripcion: row.target_descripcion,
     zona: row.zona,
     buscador_contact_id: row.buscador_contact_id,
+    es_menor: row.es_menor ?? false,
     created_at: row.created_at,
   };
 }

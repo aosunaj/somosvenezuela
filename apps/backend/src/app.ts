@@ -25,6 +25,9 @@ import { registerMatchRoutes } from "./routes/matches.js";
 import { registerReunionRoutes } from "./routes/reunion.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerSearchesRoutes } from "./routes/searches.js";
+import { registerConsentRoutes } from "./routes/consent.js";
+import { registerRelayRoutes } from "./routes/relay.js";
+import { registerRescatadoRoutes } from "./routes/rescatado.js";
 
 // App factory de la API.
 //
@@ -135,6 +138,21 @@ export async function buildApp(
     channelLinkRepo: deps.channelLinkRepo,
     matchRepo: deps.matchRepo,
     notificationRepo: deps.notificationRepo,
+  });
+  // Consentimiento bilateral Model B (consent_sessions / relay_sessions).
+  registerConsentRoutes(app, deps);
+  // Relay de mensajes Model B.
+  registerRelayRoutes(app, deps);
+  // Reporte de persona rescatada/encontrada (Slice D). La ruta resuelve el lado
+  // buscador (channel_id + contact_id) desde (plataforma, chatId) via channelLinkRepo.
+  registerRescatadoRoutes(app, {
+    personRepo: deps.personRepo,
+    searchRepo: deps.searchRepo,
+    consentRepo: deps.consentRepo,
+    notificationRepo: deps.notificationRepo,
+    channelLinkRepo: deps.channelLinkRepo,
+    // Secreto compartido bot<->backend (Modelo B): la ruta /rescatado lo exige.
+    botSecret: deps.botSecret,
   });
 
   return app;

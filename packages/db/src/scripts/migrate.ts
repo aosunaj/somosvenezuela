@@ -1,32 +1,38 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import postgres from "postgres";
 import { DbConfigError, loadMigrationEnv } from "../env.js";
 import { loadDotenvIfPresent } from "../loadDotenv.js";
+import { runMigrations, type MigrationFile } from "../migrate.js";
 
 // Carga el .env de la raiz si existe (desarrollo local); en prod usa el entorno real.
 loadDotenvIfPresent();
 
-// Runner de migraciones. Aplica migrations/*.sql en ORDEN alfabetico contra la
-// conexion directa Postgres (DATABASE_URL). PostgREST/supabase-js no ejecuta SQL
-// arbitrario; las migraciones (DDL) requieren conexion directa.
+// CLI runner de migraciones. Wrapper fino sobre packages/db/src/migrate.ts que:
+//   1) Lee archivos .sql del directorio migrations/ raiz del repo.
+//   2) Los pasa a runMigrations() que aplica el ledger de idempotencia.
 //
-// Alternativa operativa: aplicarlas via el MCP de Supabase (apply_migration), como
-// describe docs/automatizacion-plataformas.md. Este runner es para entornos con
-// DATABASE_URL disponible (backend/CI).
-//
-// Idempotencia: las migraciones del proyecto ya usan IF NOT EXISTS / OR REPLACE.
+// Alternativa operativa: aplicar via el MCP de Supabase (apply_migration).
+// Este runner es para entornos con DATABASE_URL disponible (backend/CI).
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /** Directorio migrations/ en la raiz del repo (este archivo vive en packages/db/src/scripts). */
 const MIGRATIONS_DIR = resolve(__dirname, "../../../../migrations");
 
-async function listMigrationFiles(dir: string): Promise<string[]> {
-  const entries = await readdir(dir);
-  return entries
+async function listMigrationFiles(dir: string): Promise<MigrationFile[]> {
+  const entries = readdirSync(dir);
+  const sqlFiles = entries
     .filter((name) => name.endsWith(".sql"))
     .sort((a, b) => a.localeCompare(b));
+
+  return Promise.all(
+    sqlFiles.map(async (filename) => {
+      const content = await readFile(join(dir, filename), "utf8");
+      return { filename, content };
+    }),
+  );
 }
 
 async function main(): Promise<void> {
@@ -50,18 +56,17 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const sql = postgres(env.DATABASE_URL, { max: 1 });
+  const pgSql = postgres(env.DATABASE_URL, { max: 1 });
+  // Cast to MigrationSql: the postgres Sql client satisfies MigrationSql at
+  // runtime (unsafe + begin + end are all present). TypeScript cannot verify
+  // the begin() callback variance without an explicit assertion here.
+  const sql = pgSql as unknown as import("../migrate.js").MigrationSql;
   try {
-    for (const file of files) {
-      const fullPath = join(MIGRATIONS_DIR, file);
-      const ddl = await readFile(fullPath, "utf8");
-      console.log(`[migrate] aplicando ${file}...`);
-      // Cada archivo se ejecuta como un bloque (puede contener varias sentencias).
-      await sql.unsafe(ddl);
-    }
-    console.log(`[migrate] OK. ${files.length} migracion(es) aplicada(s).`);
+    console.log(`[migrate] Iniciando: ${files.length} archivo(s) en ${MIGRATIONS_DIR}`);
+    await runMigrations(sql, files);
+    console.log(`[migrate] OK. Migraciones aplicadas (ver schema_migrations para detalle).`);
   } finally {
-    await sql.end({ timeout: 5 });
+    await pgSql.end({ timeout: 5 });
   }
 }
 

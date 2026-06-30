@@ -94,26 +94,53 @@ export class NotOwnerError extends Error {
   }
 }
 
+// ── Relay (F4 selective pre-machine intercept, design v3) ────────────────────
+
+/**
+ * Info del relay activo para el canal. Retornado por `getActiveRelay`.
+ * Nunca transporta datos de contacto (guardrail #1): solo IDs internos
+ * que permiten enrutar la notificacion del mensaje por la cola del backend.
+ */
+export interface ActiveRelayInfo {
+  /** ID de la relay_session activa. */
+  readonly relayId: string;
+  /** channel_id de la OTRA parte (hacia quien se reenvía el mensaje). */
+  readonly otherChannelId: string;
+}
+
+/**
+ * Datos de una llamada a `forwardRelayMessage` (exportado para tests).
+ * El relay forward siempre va a traves de la cola de notifications del backend
+ * (NUNCA por Telegram API directo), conforme al contrato del poller.
+ */
+export interface ForwardRelayCall {
+  readonly relayId: string;
+  readonly text: string;
+  readonly channel: ChannelIdentity;
+}
+
 /**
  * Cliente del backend HTTP. Expone solo las operaciones que el adaptador necesita
- * para los flujos de registrar, buscar y borrar. JAMAS pide ni procesa `contact_id`
- * de terceros: el vinculo usuario<->canal viaja en `channel` (que el backend persiste
- * en la tabla `channels`), y las vistas publicas que devuelve no traen contacto.
+ * para los flujos de registrar, buscar, borrar y relay de mensajes.
  *
- * - `registerPerson` envia el `PersonCreate` que arma la maquina MAS la identidad del
- *   canal (POST /register-person), para que el registro quede vinculado al usuario.
- * - `registerPet` envia el `PetCreate` que arma la maquina MAS la identidad del canal
- *   (POST /pets con `channel`), para que la mascota quede vinculada al usuario.
- * - `deleteByChannel` borra un registro solo si el canal que lo pide es su dueno
- *   (DELETE /persons/:id/by-channel); el backend autoriza, el adaptador no decide.
- * - `markFoundByChannel` marca un registro como encontrado con vida solo si el canal
- *   que lo pide es su dueno (POST /persons/:id/found-by-channel); el backend autoriza.
- *   Reutiliza `NotOwnerError` (403) igual que el borrado.
- * - `searchPersons`/`searchPets` devuelven la vista publica (sin contacto) con score.
- * - `listZones`/`listNeeds` son LECTURA PUBLICA del mapa (GET): puntos de encuentro y
- *   necesidades por zona. Sin contacto ni PII; el bot solo las muestra (paridad web).
- * - `createPerson` se conserva por compatibilidad con tests del slice anterior; el
- *   flujo real de registro usa `registerPerson`.
+ * JAMAS pide ni procesa `contact_id` de terceros: el vinculo usuario<->canal viaja
+ * en `channel` (que el backend persiste en la tabla `channels`), y las vistas
+ * publicas que devuelve no traen contacto.
+ *
+ * RELAY METHODS (F4, design v3):
+ * - `getActiveRelay`: comprueba si este canal tiene un relay activo (GET /relay/active).
+ *   Devuelve `ActiveRelayInfo | null`. Solo devuelve null si no hay relay, nunca lanza.
+ * - `forwardRelayMessage`: envía un mensaje a traves del relay escribiendo en la cola
+ *   de notifications del backend (POST /relay/:id/forward). El backend lo entrega al
+ *   otro partido por el poller. NUNCA llama a Telegram API directamente.
+ * - `closeRelay`: cierra el relay activo para ambas partes (POST /relay/:id/close).
+ *   El backend notifica a la otra parte (por la cola) y cierra la relay_session.
+ * - `respondConsent`: el canal responde a una solicitud de consentimiento de contacto
+ *   (POST /consent/:id/respond). Usado en el flujo de verificacion de identidad.
+ * - `requestRelayReveal`: solicita la revelacion bilateral del contacto en un relay
+ *   activo (POST /relay/:id/reveal).
+ * - `sweepConsent`: tarea de mantenimiento: expira los consent_sessions vencidos
+ *   (POST /consent/sweep). Pensado para llamarse desde el ciclo del poller.
  */
 export interface BackendClient {
   createPerson(data: unknown): Promise<{ readonly id: string }>;
@@ -134,11 +161,18 @@ export interface BackendClient {
    * sin registros => lista vacia.
    */
   listMyPersons(channel: ChannelIdentity): Promise<readonly OwnedPerson[]>;
+  /**
+   * Busca personas en el backend (POST /searches).
+   * `es_menor` se incluye cuando la maquina recibio una respuesta explicita del
+   * usuario (paso 'menor', R2-4a). El backend lo confirma server-side de forma
+   * conservadora (judgment-r3 item 5).
+   */
   searchPersons(
     query: string,
     zona?: string,
     channel?: ChannelIdentity,
     descripcion?: string,
+    es_menor?: boolean,
   ): Promise<readonly PublicPersonResult[]>;
   searchPets(
     query: string,
@@ -164,7 +198,52 @@ export interface BackendClient {
   ): Promise<ReunionConsentStatus>;
   listZones(): Promise<readonly PublicZone[]>;
   listNeeds(): Promise<readonly PublicNeed[]>;
+  // ── Relay methods (F4, design v3) ─────────────────────────────────────────
+  /** Consulta si el canal tiene un relay activo. Nunca lanza; null = sin relay. */
+  getActiveRelay(channel: ChannelIdentity): Promise<ActiveRelayInfo | null>;
+  /**
+   * Reenvía un mensaje de texto a traves del relay. Escribe en la cola de
+   * notifications del backend; el poller lo entrega. NUNCA llama a Telegram API.
+   * guardrail #1: el `text` ya fue escaneado por `scanRelayContent` antes de llegar.
+   */
+  forwardRelayMessage(
+    relayId: string,
+    text: string,
+    channel: ChannelIdentity,
+  ): Promise<void>;
+  /** Cierra el relay para ambas partes. El backend notifica a la otra. */
+  closeRelay(relayId: string, channel: ChannelIdentity): Promise<void>;
+  /** Acepta o rechaza un consent_session pendiente (flujo de verificacion). */
+  respondConsent(
+    consentId: string,
+    decision: "aceptado" | "rechazado",
+    channel: ChannelIdentity,
+  ): Promise<void>;
+  /** Solicita la revelacion bilateral del contacto en el relay activo. */
+  requestRelayReveal(relayId: string, channel: ChannelIdentity): Promise<void>;
+  /** Sweep de consent_sessions vencidos (tarea de mantenimiento del poller). */
+  sweepConsent(): Promise<void>;
+  /**
+   * Reporte de persona encontrada (Slice D): el BUSCADOR informa que encontro a
+   * alguien registrado en el sistema. El backend verifica guards (menor, fallecida,
+   * consent-race) y encola la notificacion al REGISTRANTE para confirmar.
+   *
+   * GUARDRAIL #4: el backend NUNCA fija a_salvo automaticamente.
+   * PRIVACIDAD: solo se pasa el id publico de la persona; sin PII de contacto.
+   */
+  reportRescatado(personId: string, channel: ChannelIdentity): Promise<RescatadoStatus>;
 }
+
+/**
+ * Estado que devuelve el backend tras un reporte de rescatado (POST /rescatado).
+ * Sin datos de contacto (guardrail #1).
+ */
+export type RescatadoStatus =
+  | "queued"
+  | "human_review"
+  | "consent_pending"
+  | "operator_queue"
+  | "failed";
 
 // ── Almacen de sesiones ──────────────────────────────────────────────────────
 

@@ -9,6 +9,22 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./menu": {
+      "types": "./dist/menu.d.ts",
+      "import": "./dist/menu.js"
+    },
+    "./unified-entry": {
+      "types": "./dist/unified-entry.d.ts",
+      "import": "./dist/unified-entry.js"
+    },
+    "./dedup": {
+      "types": "./dist/dedup.d.ts",
+      "import": "./dist/dedup.js"
+    },
+    "./utils/scanRelayContent": {
+      "types": "./dist/utils/scanRelayContent.d.ts",
+      "import": "./dist/utils/scanRelayContent.js"
     }
   },
   "files": [
@@ -17,7 +33,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --allowOnly=false",
     "lint": "echo \"[lint] core: sin linter configurado en esta fase\" && exit 0"
   },
   "dependencies": {

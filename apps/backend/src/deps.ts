@@ -1,6 +1,9 @@
 import type {
+  AuditRepo,
   ChannelLinkRepo,
   ChannelRepo,
+  ConsentRepo,
+  ContactRepo,
   MatchRepo,
   NeedRepo,
   NotificationRepo,
@@ -8,6 +11,7 @@ import type {
   PersonStateAuditRepo,
   PetRepo,
   PetSearchRepo,
+  RelayRepo,
   SearchRepo,
   SecureDeleteRepo,
   ZoneRepo,
@@ -49,4 +53,40 @@ export interface AppDeps {
    * En Fase 2, el borrado por el dueno via canal usara el token del bot.
    */
   serviceToken: string | undefined;
+  /**
+   * Secreto compartido bot<->backend para las rutas by-channel del Modelo B
+   * (consent/respond, relay/close, rescatado). Se lee de BOT_BACKEND_SECRET en el
+   * arranque. Las rutas exigen el header x-bot-secret y lo comparan en tiempo
+   * constante. FAIL-CLOSED: si esta configurado, se exige siempre (header
+   * faltante o incorrecto -> 401, sin efecto). Si esta vacio/indefinido (dev/test
+   * sin secreto), la verificacion se omite para no romper el desarrollo local.
+   * En produccion (Render) DEBE configurarse en el backend y en ambos bots.
+   */
+  botSecret: string | undefined;
+  /**
+   * Relay de mensajes entre dos canales tras doble consentimiento (relay_sessions).
+   * SENSIBLE: solo backend.
+   */
+  relayRepo: RelayRepo;
+  /**
+   * Auditoría inmutable de conexiones automáticas (auto_connection_audit).
+   * SENSIBLE: solo backend.
+   */
+  auditRepo: AuditRepo;
+  /**
+   * Consentimiento bilateral y apertura de relay vía plpgsql.
+   * SENSIBLE: solo backend.
+   */
+  consentRepo: ConsentRepo;
+  /**
+   * Contactos (SENSIBLE: teléfono/email). Solo se usa para el reveal bilateral
+   * de contacto (POST /relay/:id/reveal), cuando ambas partes han dado su
+   * consentimiento explícito. Nunca expuesto en rutas públicas.
+   */
+  contactRepo: ContactRepo;
+  /**
+   * Umbral de score para el auto-path (por defecto 0.85 del env).
+   * Por debajo → gate humano. La IA sugiere, los humanos confirman (guardrail #4).
+   */
+  autoMatchThreshold: number;
 }

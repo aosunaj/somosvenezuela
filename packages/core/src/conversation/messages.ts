@@ -14,6 +14,7 @@ const ESTADO_LABEL: Record<EstadoPersona, string> = {
   encontrada_herida: "encontrada herida",
   fallecida: "fallecida",
   reunida: "reunida",
+  a_salvo: "a salvo",
 };
 
 // Textos de cara al usuario, en espanol neutral (sin voseo) y claros para gente
@@ -541,3 +542,21 @@ export const MARK_FOUND_DONE =
 
 export const MARK_FOUND_FAILED =
   "No pudimos marcar el registro ahora mismo. Por favor, intentalo de nuevo en un momento.";
+
+// ── Búsqueda — pregunta de menor (R2-4a) ────────────────────────────────────
+//
+// CRÍTICO (guardrail #2 / R2-4): la búsqueda DEBE preguntar si la persona es
+// menor de forma EXPLÍCITA. `es_menor` nunca tiene default silencioso en la
+// recolección conversacional; el backend lo confirma server-side al crear la
+// búsqueda (judgment-r3 item 5).
+
+export const SEARCH_ASK_MENOR =
+  "Una pregunta importante: ¿la persona que buscas es menor de edad (menos de 18 años)?";
+
+export const SEARCH_MENOR_INVALID =
+  "Por favor, responde Sí o No. ¿La persona que buscas es menor de 18 años?";
+
+/** Teclado para la pregunta de menor: Sí / No. */
+export function menorButtons(): string[][] {
+  return [["Sí", "No"]];
+}

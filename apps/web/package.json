@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --allowOnly=false",
     "lint": "echo \"[lint] web: sin linter configurado en esta fase\" && exit 0"
   },
   "dependencies": {

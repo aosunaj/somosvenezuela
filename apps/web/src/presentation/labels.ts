@@ -11,6 +11,7 @@ export const ESTADO_LABEL: Record<EstadoPersona, string> = {
   encontrada_herida: "Encontrada herida",
   fallecida: "Fallecida",
   reunida: "Reunida con su familia",
+  a_salvo: "A salvo",
 };
 
 /** Clases Tailwind (badge) por estado, con suficiente contraste. */
@@ -20,6 +21,7 @@ export const ESTADO_BADGE_CLASS: Record<EstadoPersona, string> = {
   encontrada_herida: "bg-orange-100 text-orange-900 ring-orange-300",
   fallecida: "bg-slate-200 text-slate-900 ring-slate-400",
   reunida: "bg-sky-100 text-sky-900 ring-sky-300",
+  a_salvo: "bg-teal-100 text-teal-900 ring-teal-300",
 };
 
 /** Etiqueta legible para el nivel de verificacion. */
