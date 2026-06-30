@@ -27,6 +27,7 @@ import { registerSearchRoutes } from "./routes/search.js";
 import { registerSearchesRoutes } from "./routes/searches.js";
 import { registerConsentRoutes } from "./routes/consent.js";
 import { registerRelayRoutes } from "./routes/relay.js";
+import { registerRescatadoRoutes } from "./routes/rescatado.js";
 
 // App factory de la API.
 //
@@ -142,6 +143,13 @@ export async function buildApp(
   registerConsentRoutes(app, deps);
   // Relay de mensajes Model B.
   registerRelayRoutes(app, deps);
+  // Reporte de persona rescatada/encontrada (Slice D).
+  registerRescatadoRoutes(app, {
+    personRepo: deps.personRepo,
+    searchRepo: deps.searchRepo,
+    consentRepo: deps.consentRepo,
+    notificationRepo: deps.notificationRepo,
+  });
 
   return app;
 }
