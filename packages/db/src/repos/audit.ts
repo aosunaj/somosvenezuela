@@ -11,6 +11,16 @@ import { DbError } from "../errors.js";
 //
 // PRIVACIDAD: el payload de route_decision expone los contact_id solo internamente.
 // La auditoría NUNCA es legible desde rutas públicas.
+//
+// CONTACT_ID NULLING EXCEPTION (judgment-r3 item 9):
+// Las columnas searcher_contact_id y registrant_contact_id en auto_connection_audit
+// pueden ser NULLadas cuando el usuario ejerce su derecho al borrado (guardrail #5).
+// Este UPDATE puntual es la ÚNICA excepción al principio append-only: se autoriza
+// porque (a) la fila de auditoría conserva su estructura (event_type, match_id,
+// score, result) y el rastro del evento no desaparece, (b) solo el contact_id — un
+// dato de contacto interno — se anonimiza, y (c) el trigger auto_connection_audit_guard
+// en la BD rechaza cualquier otro UPDATE. Esto cumple el derecho al borrado (RGPD art.
+// 17) sin comprometer la trazabilidad operacional del reencuentro.
 
 /** Tipos de evento de auditoría (espeja el CHECK de la migración). */
 export const AUDIT_EVENT_TYPE = {
