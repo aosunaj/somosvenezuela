@@ -9,6 +9,8 @@ import type { AppDeps } from "../src/deps.js";
 const CONSENT_ID = "c5000001-0000-4000-8000-000000000001";
 const SEARCHER_CHAN = "c0000001-0000-4000-8000-000000000001";
 const REGISTRANT_CHAN = "c0000002-0000-4000-8000-000000000002";
+// Canal del buscador (plataforma + chatId) que resuelve a SEARCHER_CHAN.
+const SEARCHER_CHANNEL = { plataforma: "telegram", chatId: "tg-searcher" } as const;
 
 function makeDeps(): AppDeps {
   return {
@@ -19,7 +21,12 @@ function makeDeps(): AppDeps {
     petSearchRepo: {} as AppDeps["petSearchRepo"],
     zoneRepo: {} as AppDeps["zoneRepo"],
     needRepo: {} as AppDeps["needRepo"],
-    channelLinkRepo: {} as AppDeps["channelLinkRepo"],
+    channelLinkRepo: {
+      // Por defecto, el canal que llama resuelve al canal del buscador de la sesión.
+      findChannelIdByChannel: vi.fn().mockResolvedValue(SEARCHER_CHAN),
+      findContactByChannel: vi.fn().mockResolvedValue(null),
+      ensureChannel: vi.fn(),
+    } as unknown as AppDeps["channelLinkRepo"],
     channelRepo: {} as AppDeps["channelRepo"],
     notificationRepo: {
       create: vi.fn().mockResolvedValue({ id: "n-1" }),
@@ -45,6 +52,11 @@ function makeDeps(): AppDeps {
       anonymizeAuditContact: vi.fn(),
       getExpiredPendingConsents: vi.fn().mockResolvedValue([]),
       markConsentExpired: vi.fn().mockResolvedValue(undefined),
+      // La sesión tiene a SEARCHER_CHAN y REGISTRANT_CHAN como partes.
+      getConsentParties: vi.fn().mockResolvedValue({
+        searcherChannelId: SEARCHER_CHAN,
+        registrantChannelId: REGISTRANT_CHAN,
+      }),
     } as unknown as AppDeps["consentRepo"],
     autoMatchThreshold: 0.85,
     serviceToken: "test-token",
@@ -57,38 +69,34 @@ const EXPIRED_SESSION = {
   registrantChannelId: REGISTRANT_CHAN,
 };
 
-describe("POST /consent/:id/respond", () => {
-  it("400 si falta party", async () => {
+describe("POST /consent/:id/respond — contrato by-channel (B5)", () => {
+  it("400 si falta channel", async () => {
     const app = await buildApp(makeDeps());
     const res = await app.inject({
       method: "POST",
       url: `/consent/${CONSENT_ID}/respond`,
       payload: {
-        action: "accept",
-        searcherChannelId: SEARCHER_CHAN,
-        registrantChannelId: REGISTRANT_CHAN,
-        // party omitida
+        decision: "aceptado",
+        // channel omitido
       },
     });
     expect(res.statusCode).toBe(400);
   });
 
-  it("400 si action no es accept ni decline", async () => {
+  it("400 si decision no es aceptado ni rechazado", async () => {
     const app = await buildApp(makeDeps());
     const res = await app.inject({
       method: "POST",
       url: `/consent/${CONSENT_ID}/respond`,
       payload: {
-        party: "searcher",
-        action: "maybe", // invalido
-        searcherChannelId: SEARCHER_CHAN,
-        registrantChannelId: REGISTRANT_CHAN,
+        channel: SEARCHER_CHANNEL,
+        decision: "quizas", // invalido
       },
     });
     expect(res.statusCode).toBe(400);
   });
 
-  it("200 en accept valido", async () => {
+  it("400 si se envía el contrato viejo (party/action/searcherChannelId) — rechazado por .strict()", async () => {
     const app = await buildApp(makeDeps());
     const res = await app.inject({
       method: "POST",
@@ -100,22 +108,99 @@ describe("POST /consent/:id/respond", () => {
         registrantChannelId: REGISTRANT_CHAN,
       },
     });
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(400);
   });
 
-  it("200 en decline valido", async () => {
-    const app = await buildApp(makeDeps());
+  it("200 en aceptado válido (decision 'aceptado' → action 'accept')", async () => {
+    const deps = makeDeps();
+    const app = await buildApp(deps);
     const res = await app.inject({
       method: "POST",
       url: `/consent/${CONSENT_ID}/respond`,
       payload: {
-        party: "registrant",
-        action: "decline",
-        searcherChannelId: SEARCHER_CHAN,
-        registrantChannelId: REGISTRANT_CHAN,
+        channel: SEARCHER_CHANNEL,
+        decision: "aceptado",
       },
     });
     expect(res.statusCode).toBe(200);
+    // Derivado server-side: el canal es el searcher → acepta como 'searcher'.
+    expect(
+      (deps.consentRepo as { acceptConsent: ReturnType<typeof vi.fn> }).acceptConsent,
+    ).toHaveBeenCalledWith(CONSENT_ID, "searcher");
+  });
+
+  it("200 en rechazado válido (decision 'rechazado' → action 'decline')", async () => {
+    const deps = makeDeps();
+    // El canal que responde resuelve al REGISTRANTE.
+    (deps.channelLinkRepo as { findChannelIdByChannel: ReturnType<typeof vi.fn> })
+      .findChannelIdByChannel.mockResolvedValue(REGISTRANT_CHAN);
+    const app = await buildApp(deps);
+    const res = await app.inject({
+      method: "POST",
+      url: `/consent/${CONSENT_ID}/respond`,
+      payload: {
+        channel: { plataforma: "telegram", chatId: "tg-registrant" },
+        decision: "rechazado",
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    // decline NO llama a acceptConsent.
+    expect(
+      (deps.consentRepo as { acceptConsent: ReturnType<typeof vi.fn> }).acceptConsent,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("403 si el canal no es parte de la sesión (no puede responder por otro)", async () => {
+    const deps = makeDeps();
+    // El canal resuelve a un UUID que NO es ni searcher ni registrant de la sesión.
+    (deps.channelLinkRepo as { findChannelIdByChannel: ReturnType<typeof vi.fn> })
+      .findChannelIdByChannel.mockResolvedValue("c0000003-0000-4000-8000-000000000003");
+    const app = await buildApp(deps);
+    const res = await app.inject({
+      method: "POST",
+      url: `/consent/${CONSENT_ID}/respond`,
+      payload: {
+        channel: { plataforma: "telegram", chatId: "tg-intruso" },
+        decision: "aceptado",
+      },
+    });
+    expect(res.statusCode).toBe(403);
+    // No debe ejecutar ningún efecto del flujo de consentimiento.
+    expect(
+      (deps.consentRepo as { acceptConsent: ReturnType<typeof vi.fn> }).acceptConsent,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("404 si el canal no resuelve a channel_id", async () => {
+    const deps = makeDeps();
+    (deps.channelLinkRepo as { findChannelIdByChannel: ReturnType<typeof vi.fn> })
+      .findChannelIdByChannel.mockResolvedValue(null);
+    const app = await buildApp(deps);
+    const res = await app.inject({
+      method: "POST",
+      url: `/consent/${CONSENT_ID}/respond`,
+      payload: {
+        channel: { plataforma: "telegram", chatId: "tg-desconocido" },
+        decision: "aceptado",
+      },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("404 si la sesión de consentimiento no existe", async () => {
+    const deps = makeDeps();
+    (deps.consentRepo as { getConsentParties: ReturnType<typeof vi.fn> })
+      .getConsentParties.mockResolvedValue(null);
+    const app = await buildApp(deps);
+    const res = await app.inject({
+      method: "POST",
+      url: `/consent/${CONSENT_ID}/respond`,
+      payload: {
+        channel: SEARCHER_CHANNEL,
+        decision: "aceptado",
+      },
+    });
+    expect(res.statusCode).toBe(404);
   });
 });
 

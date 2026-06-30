@@ -48,6 +48,17 @@ export interface CloseRelayRow {
 /** Parte que está aceptando el consentimiento. */
 export type ConsentParty = "searcher" | "registrant";
 
+/**
+ * Canales de las dos partes de una consent_session. Devuelto por getConsentParties
+ * para que la ruta /consent/:id/respond derive SERVER-SIDE qué parte es el canal que
+ * llama (B5): nunca se confía en que el cliente declare su rol. channel_id son UUIDs
+ * internos; jamás PII.
+ */
+export interface ConsentParties {
+  readonly searcherChannelId: string;
+  readonly registrantChannelId: string;
+}
+
 // ── Interfaz del repositorio ────────────────────────────────────────────────
 
 /** Input para crear una consent_session. */
@@ -136,6 +147,14 @@ export interface ConsentRepo {
    * Best-effort: the sweep catches per-session errors and continues.
    */
   markConsentExpired(consentId: string): Promise<void>;
+
+  /**
+   * Devuelve los channel_id (searcher/registrant) de la consent_session dada, o null
+   * si no existe. La ruta /consent/:id/respond lo usa para derivar SERVER-SIDE qué
+   * parte es el canal que responde, sin confiar en lo que declare el cliente (B5).
+   * SELECT searcher_channel_id, registrant_channel_id FROM consent_sessions WHERE id=.
+   */
+  getConsentParties(consentId: string): Promise<ConsentParties | null>;
 }
 
 // ── Implementación ──────────────────────────────────────────────────────────
@@ -276,6 +295,32 @@ export function createConsentRepo(client: DbClient): ConsentRepo {
       if (error) {
         throw new DbError(`markConsentExpired falló: ${error.message}`, error.code);
       }
+    },
+
+    async getConsentParties(consentId: string): Promise<ConsentParties | null> {
+      // SELECT searcher_channel_id, registrant_channel_id
+      // FROM consent_sessions WHERE id = consentId
+      //
+      // Lectura mínima para que la ruta correlacione el canal que responde con su
+      // rol (searcher/registrant) SIN exponer PII: ambos son UUIDs internos (B5).
+      const { data, error } = await client
+        .from("consent_sessions")
+        .select("searcher_channel_id, registrant_channel_id")
+        .eq("id", consentId)
+        .maybeSingle<{
+          searcher_channel_id: string;
+          registrant_channel_id: string;
+        }>();
+
+      if (error) {
+        throw new DbError(`getConsentParties falló: ${error.message}`, error.code);
+      }
+      if (!data) return null;
+
+      return {
+        searcherChannelId: data.searcher_channel_id,
+        registrantChannelId: data.registrant_channel_id,
+      };
     },
   };
 }
