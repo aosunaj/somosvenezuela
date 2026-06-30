@@ -9,7 +9,7 @@
     "start": "node dist/index.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --allowOnly=false",
     "lint": "echo \"[lint] bot-telegram: sin linter configurado en esta fase\" && exit 0"
   },
   "dependencies": {

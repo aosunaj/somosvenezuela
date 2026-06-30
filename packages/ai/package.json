@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --allowOnly=false",
     "lint": "echo \"[lint] ai: sin linter configurado en esta fase\" && exit 0",
     "eval": "tsx eval/run-eval.ts"
   },

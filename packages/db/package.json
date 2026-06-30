@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --allowOnly=false",
     "lint": "echo \"[lint] db: sin linter configurado en esta fase\" && exit 0",
     "migrate": "tsx src/scripts/migrate.ts",
     "seed": "tsx src/scripts/seed.ts",
