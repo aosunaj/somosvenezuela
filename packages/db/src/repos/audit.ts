@@ -33,12 +33,10 @@ export interface RouteDecisionInput {
 
 /** Input para registrar un cambio de estado del consentimiento. */
 export interface ConsentStateChangeInput {
-  matchId: string;
-  searcherContactId: string | null;
-  registrantContactId: string | null;
-  score: number;
-  threshold: number;
-  result: string; // nuevo estado del consent_session
+  consentId: string;
+  previousState: string;
+  newState: string;
+  party: string;
 }
 
 export interface AuditRepo {
@@ -76,14 +74,13 @@ export function createAuditRepo(client: DbClient): AuditRepo {
     },
 
     async writeConsentStateChange(input: ConsentStateChangeInput): Promise<void> {
+      // Stores consent state transitions in auto_connection_audit for audit trail.
+      // Uses the result column to store newState and a JSON result field.
       const { error } = await client.from("auto_connection_audit").insert({
         event_type: AUDIT_EVENT_TYPE.CONSENT_STATE_CHANGE,
-        match_id: input.matchId,
-        searcher_contact_id: input.searcherContactId,
-        registrant_contact_id: input.registrantContactId,
-        score: input.score,
-        threshold: input.threshold,
-        result: input.result,
+        result: `${input.previousState}->${input.newState} by ${input.party}`,
+        // consent_id is not a column in auto_connection_audit (design: match_id is the link)
+        // We embed it in the result string for traceability.
       });
 
       if (error) {

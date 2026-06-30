@@ -148,6 +148,8 @@ export const searchCreateSchema = z.object({
   target_descripcion: textoOpcional.optional(),
   zona: textoOpcional.optional(),
   buscador_contact_id: idSchema.nullable().optional(),
+  /** Señal de menor (auto-declarada o set por el server conservativamente). */
+  es_menor: z.boolean().optional().default(false),
 });
 export type SearchCreate = z.infer<typeof searchCreateSchema>;
 
@@ -160,6 +162,8 @@ export const searchSchema = z.object({
   zona: textoOpcional,
   // SENSIBLE — nunca en respuestas publicas.
   buscador_contact_id: idSchema.nullable(),
+  /** Señal de menor conservativa. false por defecto; true si se detecta o declara. */
+  es_menor: z.boolean().default(false),
   created_at: z.iso.datetime({ offset: true }),
 });
 export type Search = z.infer<typeof searchSchema>;

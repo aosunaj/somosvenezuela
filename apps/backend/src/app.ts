@@ -25,6 +25,8 @@ import { registerMatchRoutes } from "./routes/matches.js";
 import { registerReunionRoutes } from "./routes/reunion.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerSearchesRoutes } from "./routes/searches.js";
+import { registerConsentRoutes } from "./routes/consent.js";
+import { registerRelayRoutes } from "./routes/relay.js";
 
 // App factory de la API.
 //
@@ -136,6 +138,10 @@ export async function buildApp(
     matchRepo: deps.matchRepo,
     notificationRepo: deps.notificationRepo,
   });
+  // Consentimiento bilateral Model B (consent_sessions / relay_sessions).
+  registerConsentRoutes(app, deps);
+  // Relay de mensajes Model B.
+  registerRelayRoutes(app, deps);
 
   return app;
 }
