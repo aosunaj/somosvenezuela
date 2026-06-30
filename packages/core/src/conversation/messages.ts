@@ -14,6 +14,7 @@ const ESTADO_LABEL: Record<EstadoPersona, string> = {
   encontrada_herida: "encontrada herida",
   fallecida: "fallecida",
   reunida: "reunida",
+  a_salvo: "a salvo",
 };
 
 // Textos de cara al usuario, en espanol neutral (sin voseo) y claros para gente
