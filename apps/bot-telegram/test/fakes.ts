@@ -7,6 +7,7 @@ import {
   type ForwardRelayCall as ForwardRelayCallType,
   type PublicPersonResult,
   type PublicPetResult,
+  type RescatadoStatus,
   type ReunionConsentStatus,
   type ReunionDecision,
   type ReunionRequestStatus,
@@ -154,6 +155,16 @@ interface FakeBackendOptions {
   readonly activeRelay?: ActiveRelayInfo | null;
   /** Si true, `closeRelay` lanza (para probar el fallo). */
   readonly closeRelayFails?: boolean;
+  /** Estado que devuelve `reportRescatado` (por defecto 'queued'). */
+  readonly reportRescatadoStatus?: RescatadoStatus;
+  /** Si true, `reportRescatado` lanza un error generico. */
+  readonly failReportRescatado?: boolean;
+}
+
+/** Captura de una llamada a reportRescatado. */
+export interface ReportRescatadoCall {
+  readonly personId: string;
+  readonly channel: ChannelIdentity;
 }
 
 export class FakeBackend implements BackendClient {
@@ -170,6 +181,7 @@ export class FakeBackend implements BackendClient {
   readonly forwardRelayMessageCalls: ForwardRelayCallType[] = [];
   readonly closeRelayCalls: CloseRelayCall[] = [];
   readonly sweepConsentCalls: number[] = [];
+  readonly reportRescatadoCalls: ReportRescatadoCall[] = [];
   /** Cuenta cuantas veces se llamo a cada lectura de mapa (sin argumentos). */
   listZonesCalls = 0;
   listNeedsCalls = 0;
@@ -339,6 +351,14 @@ export class FakeBackend implements BackendClient {
   async requestRelayReveal(relayId: string, channel: ChannelIdentity): Promise<void> {
     void relayId;
     void channel;
+  }
+
+  async reportRescatado(personId: string, channel: ChannelIdentity): Promise<RescatadoStatus> {
+    this.reportRescatadoCalls.push({ personId, channel });
+    if (this.#opts.failReportRescatado === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+    return this.#opts.reportRescatadoStatus ?? "queued";
   }
 }
 

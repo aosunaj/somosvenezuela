@@ -223,7 +223,27 @@ export interface BackendClient {
   requestRelayReveal(relayId: string, channel: ChannelIdentity): Promise<void>;
   /** Sweep de consent_sessions vencidos (tarea de mantenimiento del poller). */
   sweepConsent(): Promise<void>;
+  /**
+   * Reporte de persona encontrada (Slice D): el BUSCADOR informa que encontro a
+   * alguien registrado en el sistema. El backend verifica guards (menor, fallecida,
+   * consent-race) y encola la notificacion al REGISTRANTE para confirmar.
+   *
+   * GUARDRAIL #4: el backend NUNCA fija a_salvo automaticamente.
+   * PRIVACIDAD: solo se pasa el id publico de la persona; sin PII de contacto.
+   */
+  reportRescatado(personId: string, channel: ChannelIdentity): Promise<RescatadoStatus>;
 }
+
+/**
+ * Estado que devuelve el backend tras un reporte de rescatado (POST /rescatado).
+ * Sin datos de contacto (guardrail #1).
+ */
+export type RescatadoStatus =
+  | "queued"
+  | "human_review"
+  | "consent_pending"
+  | "operator_queue"
+  | "failed";
 
 // ── Almacen de sesiones ──────────────────────────────────────────────────────
 

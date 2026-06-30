@@ -14,6 +14,7 @@ import {
   type ChannelIdentity,
   type PublicPersonResult,
   type PublicPetResult,
+  type RescatadoStatus,
   type ReunionConsentStatus,
   type ReunionDecision,
   type ReunionRequestStatus,
@@ -37,6 +38,7 @@ import {
 //   POST   `${BACKEND_URL}/relay/:id/reveal`        -> solicitar revelacion bilateral.
 //   POST   `${BACKEND_URL}/consent/sweep`           -> expirar consent sessions vencidos.
 //   GET    `${BACKEND_URL}/needs`                   -> lista necesidades publicas (mapa).
+//   POST   `${BACKEND_URL}/rescatado`               -> reportar persona encontrada (Slice D).
 //
 // Tipamos/validamos las respuestas con los schemas de `core` para no confiar
 // ciegamente en el backend. JAMAS pedimos ni leemos contact_id: el contrato del
@@ -486,6 +488,40 @@ export class HttpBackendClient implements BackendClient {
     });
     if (!res.ok) {
       throw new Error(`POST /consent/sweep fallo con estado ${res.status}`);
+    }
+  }
+
+  /** Schema for POST /rescatado response. */
+  static readonly #rescatadoResponseSchema = z.object({
+    outcome: z.enum(["queued", "human_review", "consent_pending", "operator_queue"]),
+  });
+
+  async reportRescatado(
+    personId: string,
+    channel: ChannelIdentity,
+  ): Promise<RescatadoStatus> {
+    try {
+      const res = await fetch(`${this.#baseUrl}/rescatado`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        // Solo enviamos el id publico de la persona y el canal del buscador.
+        // NUNCA contact_id: el backend resuelve el vinculo por canal (guardrail #1).
+        body: JSON.stringify({
+          personId,
+          channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        }),
+      });
+      if (!res.ok) {
+        return "failed";
+      }
+      const json: unknown = await res.json();
+      const parsed = HttpBackendClient.#rescatadoResponseSchema.safeParse(json);
+      if (!parsed.success) {
+        return "failed";
+      }
+      return parsed.data.outcome;
+    } catch {
+      return "failed";
     }
   }
 }

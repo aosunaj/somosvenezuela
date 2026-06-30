@@ -13,6 +13,7 @@ import { telegramUpdateSchema } from "./telegram-types.js";
 import type {
   BackendClient,
   ChannelIdentity,
+  RescatadoStatus,
   ReunionConsentStatus,
   SessionStore,
   TelegramTransport,
@@ -91,6 +92,21 @@ const REUNION_NOTHING_PENDING =
 const REUNION_CONSENT_FAILED =
   "No pudimos registrar tu respuesta ahora mismo. Por favor, intentalo de nuevo en un momento.";
 
+// RESCATADO: /reportar_rescatado <personId> — el BUSCADOR reporta haber encontrado a alguien.
+const RESCATADO_QUEUED =
+  "Gracias. Notificamos a quien registro a esa persona para que confirme el reencuentro. " +
+  "Si aceptan, les pondremos en contacto.";
+const RESCATADO_HUMAN_REVIEW =
+  "El caso requiere revision de nuestro equipo. Nos pondremos en contacto pronto. Gracias.";
+const RESCATADO_CONSENT_PENDING =
+  "Ya hay una solicitud de reencuentro en curso para esa persona. Espera la respuesta.";
+const RESCATADO_OPERATOR_QUEUE =
+  "El caso fue derivado a nuestro equipo. Nos pondremos en contacto pronto.";
+const RESCATADO_FAILED =
+  "No pudimos procesar el reporte ahora mismo. Por favor, intentalo de nuevo en un momento.";
+const RESCATADO_NO_PERSON_ID =
+  "Por favor, indicame el codigo de la persona. Ejemplo: /reportar_rescatado <codigo>";
+
 // Mensajes del relay (espanol neutral, guardrail #1: sin datos de la otra parte).
 const RELAY_FORWARDED = "Mensaje enviado.";
 const RELAY_CLOSED_SELF =
@@ -149,6 +165,10 @@ export async function handleUpdate(rawUpdate: unknown, deps: UpdateDeps): Promis
   // REENCUENTRO: /conectar | /rechazar del REGISTRANTE se atienden ANTES de la maquina
   // (comandos globales, sin estado de sesion). Si lo manejamos aqui, terminamos.
   if (await handleReunionConsent(chatId, content, deps)) return;
+
+  // RESCATADO (Slice D): /reportar_rescatado <personId> — el BUSCADOR reporta encontrar alguien.
+  // Manejado FUERA de la maquina (como reunionConsent): comando global sin estado de sesion.
+  if (await handleReportarRescatado(chatId, content, deps)) return;
 
   // Flujo unificado U-1: si la sesion esta en ese flujo, el handler lo maneja.
   if (
@@ -305,6 +325,54 @@ async function handleReunionConsent(
     await deps.transport.sendMessage(chatId, REUNION_CONSENT_FAILED);
   }
   return true;
+}
+
+/**
+ * Atiende el comando /reportar_rescatado <personId> del BUSCADOR.
+ * Devuelve `true` si el contenido era ese comando (ya se respondio), o `false`.
+ *
+ * El personId llega como segundo token del comando; si falta, pedimos que lo indique.
+ * No usa sesion: es un comando global, similar a /conectar.
+ */
+async function handleReportarRescatado(
+  chatId: number,
+  content: string,
+  deps: UpdateDeps,
+): Promise<boolean> {
+  const tokens = content.trim().split(/\s+/);
+  const verb = (tokens[0] ?? "").split("@")[0]?.toLowerCase() ?? "";
+  if (verb !== "/reportar_rescatado") return false;
+
+  const personId = tokens[1];
+  if (personId === undefined || personId.trim().length === 0) {
+    await deps.transport.sendMessage(chatId, RESCATADO_NO_PERSON_ID);
+    return true;
+  }
+
+  const channel: ChannelIdentity = { plataforma: PLATAFORMA, chatId: String(chatId) };
+  try {
+    const status = await deps.backend.reportRescatado(personId.trim(), channel);
+    await deps.transport.sendMessage(chatId, rescatadoMessage(status));
+  } catch {
+    await deps.transport.sendMessage(chatId, RESCATADO_FAILED);
+  }
+  return true;
+}
+
+/** Traduce el outcome del rescatado a un mensaje calido y claro. Sin datos de contacto. */
+function rescatadoMessage(status: RescatadoStatus): string {
+  switch (status) {
+    case "queued":
+      return RESCATADO_QUEUED;
+    case "human_review":
+      return RESCATADO_HUMAN_REVIEW;
+    case "consent_pending":
+      return RESCATADO_CONSENT_PENDING;
+    case "operator_queue":
+      return RESCATADO_OPERATOR_QUEUE;
+    case "failed":
+      return RESCATADO_FAILED;
+  }
 }
 
 /** Traduce el estado del consentimiento del registrante a un mensaje calido. */
