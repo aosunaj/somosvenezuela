@@ -143,12 +143,14 @@ export async function buildApp(
   registerConsentRoutes(app, deps);
   // Relay de mensajes Model B.
   registerRelayRoutes(app, deps);
-  // Reporte de persona rescatada/encontrada (Slice D).
+  // Reporte de persona rescatada/encontrada (Slice D). La ruta resuelve el lado
+  // buscador (channel_id + contact_id) desde (plataforma, chatId) via channelLinkRepo.
   registerRescatadoRoutes(app, {
     personRepo: deps.personRepo,
     searchRepo: deps.searchRepo,
     consentRepo: deps.consentRepo,
     notificationRepo: deps.notificationRepo,
+    channelLinkRepo: deps.channelLinkRepo,
   });
 
   return app;

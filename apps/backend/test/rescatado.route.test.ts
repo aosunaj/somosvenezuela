@@ -5,11 +5,15 @@ import {
   validatorCompiler,
 } from "fastify-type-provider-zod";
 import { errorHandler } from "../src/errors.js";
-import { registerRescatadoRoutes } from "../src/routes/rescatado.js";
-import type { RescatadoDeps } from "../src/services/rescatado.js";
+import {
+  registerRescatadoRoutes,
+  type RescatadoRouteDeps,
+} from "../src/routes/rescatado.js";
 
 // Tests de ruta POST /rescatado (Slice D).
-// Strict TDD — tests escritos ANTES de la implementacion (RED).
+//
+// CONTRATO (B3): el cliente envia { personId, channel: { plataforma, chatId } } y
+// la ruta resuelve searcherChannelId + searcherContactId server-side.
 //
 // PRIVACIDAD: ninguna respuesta expone PII.
 // La ruta delega en reportRescatado() con fake deps.
@@ -18,11 +22,12 @@ const SYNTH_PERSON_ID = "cccccccc-0000-4000-8000-000000000003";
 const SYNTH_SEARCH_ID = "dddddddd-0000-4000-8000-000000000004";
 const SYNTH_REGISTRANT_CHANNEL = "bbbbbbbb-0000-4000-8000-000000000002";
 const SYNTH_SEARCHER_CHANNEL = "aaaaaaaa-0000-4000-8000-000000000001";
+const SYNTH_SEARCHER_CONTACT = "ffffffff-0000-4000-8000-000000000006";
 const SYNTH_CONSENT_ID = "eeeeeeee-0000-4000-8000-000000000005";
 
 function makeFakeDeps(
   registrantIsMinor = false,
-): RescatadoDeps {
+): RescatadoRouteDeps {
   return {
     personRepo: {
       async isMinorById(_id) {
@@ -54,12 +59,21 @@ function makeFakeDeps(
       async markSent() {},
       async markFailed() {},
     },
+    channelLinkRepo: {
+      // El buscador siempre resuelve a un canal + contacto adulto por defecto.
+      async findChannelIdByChannel(_p, _c) {
+        return SYNTH_SEARCHER_CHANNEL;
+      },
+      async findContactByChannel(_p, _c) {
+        return SYNTH_SEARCHER_CONTACT;
+      },
+    },
   };
 }
 
 let app: FastifyInstance;
 
-async function buildApp(deps: RescatadoDeps): Promise<void> {
+async function buildApp(deps: RescatadoRouteDeps): Promise<void> {
   app = Fastify({ logger: false });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -85,7 +99,7 @@ describe("POST /rescatado — ruta", () => {
         personId: SYNTH_PERSON_ID,
         searchId: SYNTH_SEARCH_ID,
         registrantChannelId: SYNTH_REGISTRANT_CHANNEL,
-        searcherChannelId: SYNTH_SEARCHER_CHANNEL,
+        channel: { plataforma: "telegram", chatId: "tg-100" },
       },
     });
 
@@ -102,7 +116,7 @@ describe("POST /rescatado — ruta", () => {
       payload: {
         searchId: SYNTH_SEARCH_ID,
         registrantChannelId: SYNTH_REGISTRANT_CHANNEL,
-        searcherChannelId: SYNTH_SEARCHER_CHANNEL,
+        channel: { plataforma: "telegram", chatId: "tg-100" },
       },
     });
 
@@ -115,6 +129,35 @@ describe("POST /rescatado — ruta", () => {
       url: "/rescatado",
       payload: {
         personId: "not-a-uuid",
+        searchId: SYNTH_SEARCH_ID,
+        registrantChannelId: SYNTH_REGISTRANT_CHANNEL,
+        channel: { plataforma: "telegram", chatId: "tg-100" },
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("400 si falta channel (contrato by-channel)", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/rescatado",
+      payload: {
+        personId: SYNTH_PERSON_ID,
+        searchId: SYNTH_SEARCH_ID,
+        registrantChannelId: SYNTH_REGISTRANT_CHANNEL,
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("400 si se envia el contrato viejo searcherChannelId (rechazado por .strict())", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/rescatado",
+      payload: {
+        personId: SYNTH_PERSON_ID,
         searchId: SYNTH_SEARCH_ID,
         registrantChannelId: SYNTH_REGISTRANT_CHANNEL,
         searcherChannelId: SYNTH_SEARCHER_CHANNEL,
@@ -136,13 +179,58 @@ describe("POST /rescatado — outcome human_review", () => {
         personId: SYNTH_PERSON_ID,
         searchId: SYNTH_SEARCH_ID,
         registrantChannelId: SYNTH_REGISTRANT_CHANNEL,
-        searcherChannelId: SYNTH_SEARCHER_CHANNEL,
+        channel: { plataforma: "telegram", chatId: "tg-100" },
       },
     });
 
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as { ok: boolean; outcome: string };
     expect(body.ok).toBe(true);
+    expect(body.outcome).toBe("human_review");
+  });
+});
+
+describe("POST /rescatado — resolucion del lado buscador (A1 + B3)", () => {
+  it("canal no resuelto a channel_id → human_review (conservador)", async () => {
+    const deps = makeFakeDeps(false);
+    deps.channelLinkRepo.findChannelIdByChannel = async () => null;
+    await buildApp(deps);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/rescatado",
+      payload: {
+        personId: SYNTH_PERSON_ID,
+        searchId: SYNTH_SEARCH_ID,
+        registrantChannelId: SYNTH_REGISTRANT_CHANNEL,
+        channel: { plataforma: "telegram", chatId: "tg-desconocido" },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { outcome: string };
+    expect(body.outcome).toBe("human_review");
+  });
+
+  it("buscador sin contact_id resuelto → human_review (gate A1 conservador)", async () => {
+    const deps = makeFakeDeps(false);
+    // channel resuelve, pero el contacto no → no es adulto positivo → human_review
+    deps.channelLinkRepo.findContactByChannel = async () => null;
+    await buildApp(deps);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/rescatado",
+      payload: {
+        personId: SYNTH_PERSON_ID,
+        searchId: SYNTH_SEARCH_ID,
+        registrantChannelId: SYNTH_REGISTRANT_CHANNEL,
+        channel: { plataforma: "telegram", chatId: "tg-100" },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { outcome: string };
     expect(body.outcome).toBe("human_review");
   });
 });
