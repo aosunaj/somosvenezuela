@@ -21,6 +21,10 @@
     "./dedup": {
       "types": "./dist/dedup.d.ts",
       "import": "./dist/dedup.js"
+    },
+    "./utils/scanRelayContent": {
+      "types": "./dist/utils/scanRelayContent.d.ts",
+      "import": "./dist/utils/scanRelayContent.js"
     }
   },
   "files": [
