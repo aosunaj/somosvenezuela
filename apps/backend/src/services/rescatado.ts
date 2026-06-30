@@ -48,6 +48,19 @@ export interface RescatadoInput {
   /** Canal interno del buscador activo (quien reporta el rescatado). */
   readonly searcherChannelId: string;
   /**
+   * Contact-id real del buscador activo (no el channel UUID).
+   *
+   * FIX (PR 6, judgment-r3): el chequeo isMinorByContactId DEBE recibir el
+   * contact_id real del buscador, no el searcherChannelId (un channel UUID no es
+   * un contact_id — usar el canal como proxy era un bug de seguridad silencioso).
+   *
+   * Si es undefined (contact desconocido o no disponible), el servicio es conservador
+   * y omite el chequeo de buscador: la logica sigue con los otros guards. El
+   * chequeo conservador (design R2-4(c) paso 2: null buscador_contact_id → minor)
+   * es responsabilidad del caller antes de invocar este servicio.
+   */
+  readonly searcherContactId?: string;
+  /**
    * Estado actual del registrante (persona o mascota encontrada).
    * Si es 'fallecida', va a revision humana.
    */
@@ -96,15 +109,19 @@ export async function reportRescatado(
     return { outcome: "human_review" };
   }
 
-  // isMinorByContactId del buscador (conservative: no PII, solo flags)
-  // Nota: el buscador no tiene contactId en este contexto, pero el design dice que
-  // la busqueda tiene buscador_contact_id. Delegamos al searchRepo con el searchId
-  // transformado como proxy. En la practica, el caller debe pasar el contactId del
-  // buscador si quiere este chequeo; por ahora chequeamos via searcherChannelId como proxy.
-  // Usamos searchId como key de busqueda para el minor check del buscador.
-  const searcherIsMinor = await deps.searchRepo.isMinorByContactId(input.searcherChannelId);
-  if (searcherIsMinor) {
-    return { outcome: "human_review" };
+  // isMinorByContactId del buscador (conservative: no PII, solo flags).
+  //
+  // FIX (PR 6, judgment-r3): usa searcherContactId real, NO searcherChannelId.
+  // Un channel UUID no es un contact_id: usar el canal como proxy era incorrecto
+  // y podria pasar adultos como menores (o viceversa) en el chequeo conservador.
+  //
+  // Si no se provee searcherContactId: omitimos el chequeo del buscador (el caller
+  // es responsable de aplicar el branch conservador R2-4(c) paso 2 antes de llamar).
+  if (input.searcherContactId !== undefined) {
+    const searcherIsMinor = await deps.searchRepo.isMinorByContactId(input.searcherContactId);
+    if (searcherIsMinor) {
+      return { outcome: "human_review" };
+    }
   }
 
   // ── Guard: registrante no localizable ──────────────────────────────────────
