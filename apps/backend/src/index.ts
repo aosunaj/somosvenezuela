@@ -1,12 +1,20 @@
 import { createServiceClient, createRepos } from "db";
 import { buildApp } from "./app.js";
 import type { AppDeps } from "./deps.js";
+import { sweepExpiredConsents } from "./services/sweep.js";
 
 // Punto de entrada del backend: cablea las dependencias REALES (cliente Supabase
 // service_role + repos) y arranca el servidor Fastify.
 //
 // Este es el UNICO sitio que toca env y crea el cliente real. La logica de las
 // rutas no conoce Supabase: recibe los repos por inyeccion (ver src/app.ts).
+//
+// SWEEP (judgment-r3 item 11): sweepExpiredConsents se registra via setInterval
+// al arrancar. Es una tarea STANDALONE del backend, NOT del poller de Telegram.
+// Intervalo configurable via SWEEP_INTERVAL_MINUTES (por defecto 5 minutos).
+// Best-effort: si falla un ciclo, lo ignora y sigue en el siguiente tick.
+
+const DEFAULT_SWEEP_INTERVAL_MINUTES = 5;
 
 /** Lee el puerto de PORT (por defecto 3000). */
 function readPort(): number {
@@ -53,6 +61,28 @@ async function main(): Promise<void> {
   await app.listen({ port, host: "0.0.0.0" });
   // eslint-disable-next-line no-console
   console.log(`backend escuchando en el puerto ${port}`);
+
+  // SWEEP: registrar tarea de barrido de consent_sessions expiradas.
+  // Usa las dependencias ya cableadas (consentRepo + notificationRepo).
+  // Best-effort: el .catch() garantiza que un fallo no mata el proceso.
+  const rawSweepMinutes = process.env["SWEEP_INTERVAL_MINUTES"];
+  const sweepMinutes =
+    rawSweepMinutes !== undefined && rawSweepMinutes.trim().length > 0
+      ? Number.parseInt(rawSweepMinutes, 10)
+      : DEFAULT_SWEEP_INTERVAL_MINUTES;
+  const sweepIntervalMs = (Number.isNaN(sweepMinutes) ? DEFAULT_SWEEP_INTERVAL_MINUTES : sweepMinutes) * 60_000;
+
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
+  setInterval(async () => {
+    await sweepExpiredConsents({
+      notificationRepo: repos.notifications,
+      getExpiredPendingConsents: () => repos.consent.getExpiredPendingConsents(),
+      markConsentExpired: (id) => repos.consent.markConsentExpired(id),
+    }).catch((err: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error("sweep error (best-effort, ignorado):", err);
+    });
+  }, sweepIntervalMs);
 }
 
 main().catch((error: unknown) => {

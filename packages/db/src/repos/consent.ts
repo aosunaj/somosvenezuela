@@ -37,6 +37,16 @@ export interface OpenConsentSessionInput {
   readonly ttlHours?: number;
 }
 
+/**
+ * Minimum expired consent session shape returned by getExpiredPendingConsents.
+ * Used by sweepExpiredConsents (judgment-r3 item 11).
+ */
+export interface ExpiredConsentSession {
+  readonly id: string;
+  readonly searcherChannelId: string;
+  readonly registrantChannelId: string;
+}
+
 export interface ConsentRepo {
   /**
    * Crea una nueva consent_session para el match dado.
@@ -87,6 +97,22 @@ export interface ConsentRepo {
    * (atomically). This app-layer method is exposed for edge-case manual erasure.
    */
   anonymizeAuditContact(auditRowId: string): Promise<void>;
+
+  /**
+   * Returns consent_sessions where state IN ('pending_a','pending_b') AND
+   * expires_at < now(). Used by sweepExpiredConsents (judgment-r3 item 11).
+   *
+   * Returns only the fields needed by the sweep: id, searcher_channel_id,
+   * registrant_channel_id (both camelCase in the return type).
+   */
+  getExpiredPendingConsents(): Promise<ExpiredConsentSession[]>;
+
+  /**
+   * Sets state='expired' for the given consent_session id.
+   * Called by sweepExpiredConsents after collecting expired sessions.
+   * Best-effort: the sweep catches per-session errors and continues.
+   */
+  markConsentExpired(consentId: string): Promise<void>;
 }
 
 // ── Implementación ──────────────────────────────────────────────────────────
@@ -174,6 +200,53 @@ export function createConsentRepo(client: DbClient): ConsentRepo {
 
       if (error) {
         throw new DbError(`anonymizeAuditContact falló: ${error.message}`, error.code);
+      }
+    },
+
+    async getExpiredPendingConsents(): Promise<ExpiredConsentSession[]> {
+      // SELECT id, searcher_channel_id, registrant_channel_id
+      // FROM consent_sessions
+      // WHERE state IN ('pending_a','pending_b') AND expires_at < now()
+      //
+      // NOTE: we pass now() as a string because supabase-js's .lt() takes a value
+      // comparable to the column type; ISO timestamp works for timestamptz.
+      const now = new Date().toISOString();
+      const { data, error } = await (client
+        .from("consent_sessions")
+        .select("id, searcher_channel_id, registrant_channel_id")
+        .in("state", ["pending_a", "pending_b"])
+        .lt("expires_at", now) as unknown as Promise<{
+        data: Array<{
+          id: string;
+          searcher_channel_id: string;
+          registrant_channel_id: string;
+        }> | null;
+        error: { message: string; code?: string } | null;
+      }>);
+
+      if (error) {
+        throw new DbError(`getExpiredPendingConsents falló: ${error.message}`, error.code);
+      }
+
+      return (data ?? []).map((row) => ({
+        id: row.id,
+        searcherChannelId: row.searcher_channel_id,
+        registrantChannelId: row.registrant_channel_id,
+      }));
+    },
+
+    async markConsentExpired(consentId: string): Promise<void> {
+      // UPDATE consent_sessions SET state='expired' WHERE id=consentId
+      const { error } = await (client
+        .from("consent_sessions")
+        .update({ state: "expired" })
+        .eq("id", consentId) as unknown as Promise<{
+        data: null;
+        error: { message: string; code?: string } | null;
+      }>);
+
+      if (error) {
+        throw new DbError(`markConsentExpired falló: ${error.message}`, error.code);
       }
     },
   };
