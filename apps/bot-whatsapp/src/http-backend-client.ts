@@ -1,6 +1,12 @@
-import { publicNeedSchema, publicPersonSchema, publicPetSchema, publicZoneSchema } from "core";
+import {
+  ownedPersonSchema,
+  publicNeedSchema,
+  publicPersonSchema,
+  publicPetSchema,
+  publicZoneSchema,
+} from "core";
 import { z } from "zod";
-import type { PublicNeed, PublicZone } from "core";
+import type { OwnedPerson, PublicNeed, PublicZone } from "core";
 import {
   NotOwnerError,
   type BackendClient,
@@ -60,6 +66,11 @@ const zonesResponseSchema = z.object({
 /** Respuesta de GET /needs: listado publico de necesidades por zona (mapa). */
 const needsResponseSchema = z.object({
   needs: z.array(publicNeedSchema),
+});
+
+/** Respuesta de POST /persons/mine-by-channel: los registros del dueno (sin contacto). */
+const myPersonsResponseSchema = z.object({
+  persons: z.array(ownedPersonSchema),
 });
 
 /** Respuesta de POST /reunion/request: el estado de la solicitud (sin contacto). */
@@ -193,6 +204,24 @@ export class HttpBackendClient implements BackendClient {
         `POST /persons/:id/found-by-channel fallo con estado ${res.status}`,
       );
     }
+  }
+
+  async listMyPersons(channel: ChannelIdentity): Promise<readonly OwnedPerson[]> {
+    const res = await fetch(`${this.#baseUrl}/persons/mine-by-channel`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // El backend autoriza por la propiedad del canal; no enviamos contact_id.
+      body: JSON.stringify({
+        plataforma: channel.plataforma,
+        chatId: channel.chatId,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`POST /persons/mine-by-channel fallo con estado ${res.status}`);
+    }
+    const json: unknown = await res.json();
+    // Validamos como vista del dueno: confirma que NO viene contact_id.
+    return myPersonsResponseSchema.parse(json).persons;
   }
 
   async requestReunion(

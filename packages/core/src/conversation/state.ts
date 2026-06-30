@@ -1,4 +1,4 @@
-import type { PersonCreate, PetCreate } from "../schemas.js";
+import type { OwnedPerson, PersonCreate, PetCreate } from "../schemas.js";
 import type { PublicNeed, PublicPerson, PublicPet, PublicZone } from "../schemas.js";
 
 // Tipos PUROS de la maquina de conversacion compartida (CLAUDE.md, 02-design.md).
@@ -56,6 +56,10 @@ export type Effect =
   // conversacion). El adaptador anade su canal; el backend pide el consentimiento de
   // la otra parte. NO transporta contacto: solo el id publico de la persona elegida.
   | { readonly type: "request_reunion"; readonly personId: string }
+  // El DUENO lista SUS PROPIOS registros para elegir cual marcar/borrar sin pegar
+  // codigos. No lleva dato alguno: el adaptador anade el canal y el backend resuelve
+  // los registros ligados a ese contacto. Devuelve la vista del dueno (sin contacto).
+  | { readonly type: "list_my_persons" }
   // Vistas de SOLO LECTURA del mapa: no llevan query ni dato alguno; el adaptador
   // hace un GET publico al backend (paridad bot<->web). Sin contacto ni PII.
   | { readonly type: "list_zones" }
@@ -127,6 +131,16 @@ export type RequestReunionResult =
   | { readonly type: "request_reunion"; readonly status: "failed" };
 
 /**
+ * Resultado de `list_my_persons`: los registros del DUENO (los ligados a su canal).
+ * Vista del dueno `OwnedPerson` (id + datos para reconocerlo + estado; SIN contacto,
+ * guardrail #1). Lista vacia => el canal no tiene registros propios en este chat.
+ */
+export type ListMyPersonsResult = {
+  readonly type: "list_my_persons";
+  readonly persons: readonly OwnedPerson[];
+};
+
+/**
  * Resultado de `list_zones`: las zonas publicas (puntos de encuentro) del mapa.
  * Vista publica `PublicZone` (sin contacto ni identidad interna, guardrail #1).
  */
@@ -153,6 +167,7 @@ export type EffectResult =
   | DeletePersonResult
   | MarkFoundResult
   | RequestReunionResult
+  | ListMyPersonsResult
   | ListZonesResult
   | ListNeedsResult;
 
@@ -256,18 +271,28 @@ export type ConversationState =
       readonly step: "query" | "searching";
       readonly query?: string;
     }
+  // Borrado (derecho al olvido): al entrar se listan los registros del DUENO
+  // ('loading'); con la lista, elige uno por su numero ('choosing'); confirma
+  // ('confirm') y se emite el efecto ('deleting'). YA NO se pegan codigos: la gente
+  // en emergencia no los guarda. El backend autoriza por canal igual que antes.
   | {
       readonly flow: "delete";
-      readonly step: "id" | "confirm" | "deleting";
+      readonly step: "loading" | "choosing" | "confirm" | "deleting";
+      // En 'choosing': los registros propios mostrados (para elegir por numero).
+      readonly persons?: readonly OwnedPerson[];
+      // En 'confirm'/'deleting': el registro elegido (id + nombre para el mensaje).
       readonly personId?: string;
+      readonly nombre?: string;
     }
-  // Reporte del dueno "apareci con vida": espeja el flujo delete (pide id ->
+  // Reporte del dueno "apareci con vida": espeja el flujo delete (lista -> elige ->
   // confirma -> emite el efecto -> espera el resultado). El backend autoriza por
   // canal igual que el borrado. MEJORA FUTURA: distinguir encontrada_herida.
   | {
       readonly flow: "mark_found";
-      readonly step: "id" | "confirm" | "marking";
+      readonly step: "loading" | "choosing" | "confirm" | "marking";
+      readonly persons?: readonly OwnedPerson[];
       readonly personId?: string;
+      readonly nombre?: string;
     }
   // Vistas de SOLO LECTURA del mapa: al entrar se emite el effect y se queda en
   // `loading` esperando el `effect_result` con la lista; luego vuelve a idle.

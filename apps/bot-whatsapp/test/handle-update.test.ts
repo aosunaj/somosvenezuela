@@ -5,6 +5,7 @@ import { InMemorySessionStore } from "../src/session-store.js";
 import {
   FakeBackend,
   FakeTransport,
+  ownedPersonFixture,
   publicNeedFixture,
   publicPersonFixture,
   publicPetFixture,
@@ -469,16 +470,22 @@ describe("manejo de errores del backend", () => {
   });
 });
 
-describe("borrado seguro por canal", () => {
+describe("borrado seguro por canal (elige de TUS registros, sin pegar codigos)", () => {
   const SYNTH_ID = "11111111-1111-4111-8111-111111111111";
 
-  it("borra de verdad cuando el canal es el dueno: llama a deleteByChannel con la identidad y confirma", async () => {
-    const backend = new FakeBackend();
+  it("lista mis registros, elijo el 1 y confirmo: llama a deleteByChannel con id y canal", async () => {
+    const backend = new FakeBackend({ myPersonsResults: [ownedPersonFixture()] });
     const { deps, transport, sessions } = makeDeps(backend);
 
-    await send(deps, WA, BUTTON.borrar, SYNTH_ID, BUTTON.confirmar);
+    // BUTTON.borrar -> lista mis registros (por canal); "1" -> elige; confirmar -> borra.
+    await send(deps, WA, BUTTON.borrar, "1", BUTTON.confirmar);
 
-    // Se llamo al borrado seguro con el id y la identidad del canal (wa_id como cadena).
+    expect(backend.listMyPersonsCalls).toHaveLength(1);
+    expect(backend.listMyPersonsCalls[0]?.channel).toEqual({
+      plataforma: "whatsapp",
+      chatId: WA,
+    });
+    // Se llamo al borrado seguro con el id elegido y la identidad del canal.
     expect(backend.deleteCalls).toHaveLength(1);
     expect(backend.deleteCalls[0]?.personId).toBe(SYNTH_ID);
     expect(backend.deleteCalls[0]?.channel).toEqual({
@@ -491,11 +498,23 @@ describe("borrado seguro por canal", () => {
     expect(sessions.get(WA)).toEqual({ flow: "idle" });
   });
 
+  it("sin registros propios avisa y no llama a borrado", async () => {
+    const backend = new FakeBackend({ myPersonsResults: [] });
+    const { deps, transport, sessions } = makeDeps(backend);
+
+    await send(deps, WA, BUTTON.borrar);
+
+    expect(backend.listMyPersonsCalls).toHaveLength(1);
+    expect(backend.deleteCalls).toHaveLength(0);
+    expect(transport.allText()).toContain("No encontramos registros");
+    expect(sessions.get(WA)).toEqual({ flow: "idle" });
+  });
+
   it("ante un 403 (no es el dueno) responde el fallo amable sin revelar la causa", async () => {
-    const backend = new FakeBackend({ deleteNotOwner: true });
+    const backend = new FakeBackend({ myPersonsResults: [ownedPersonFixture()], deleteNotOwner: true });
     const { deps, transport } = makeDeps(backend);
 
-    await send(deps, WA, BUTTON.borrar, SYNTH_ID, BUTTON.confirmar);
+    await send(deps, WA, BUTTON.borrar, "1", BUTTON.confirmar);
 
     expect(backend.deleteCalls).toHaveLength(1);
     // Mensaje generico de la maquina (no confirma existencia ni pertenencia a un tercero).
@@ -506,15 +525,61 @@ describe("borrado seguro por canal", () => {
   });
 
   it("no crashea si el borrado falla por un error transitorio del backend", async () => {
-    const backend = new FakeBackend({ failDelete: true });
+    const backend = new FakeBackend({ myPersonsResults: [ownedPersonFixture()], failDelete: true });
     const { deps, transport } = makeDeps(backend);
 
     await expect(
-      send(deps, WA, BUTTON.borrar, SYNTH_ID, BUTTON.confirmar),
+      send(deps, WA, BUTTON.borrar, "1", BUTTON.confirmar),
     ).resolves.toBeUndefined();
 
     expect(backend.deleteCalls).toHaveLength(1);
     expect(transport.allText()).toContain("No pudimos borrar el registro");
+  });
+});
+
+describe("rescatado seguro por canal (elige de TUS registros, sin pegar codigos)", () => {
+  const SYNTH_ID = "11111111-1111-4111-8111-111111111111";
+
+  it("lista mis registros, elijo el 1 y confirmo: llama a markFoundByChannel con id y canal", async () => {
+    const backend = new FakeBackend({ myPersonsResults: [ownedPersonFixture()] });
+    const { deps, transport, sessions } = makeDeps(backend);
+
+    await send(deps, WA, BUTTON.rescatado, "1", BUTTON.confirmar);
+
+    expect(backend.listMyPersonsCalls).toHaveLength(1);
+    expect(backend.markFoundCalls).toHaveLength(1);
+    expect(backend.markFoundCalls[0]?.personId).toBe(SYNTH_ID);
+    expect(backend.markFoundCalls[0]?.channel).toEqual({
+      plataforma: "whatsapp",
+      chatId: WA,
+    });
+
+    expect(transport.allText()).toContain("encontrado con vida");
+    expect(sessions.get(WA)).toEqual({ flow: "idle" });
+  });
+
+  it("sin registros propios avisa y no llama a marcado", async () => {
+    const backend = new FakeBackend({ myPersonsResults: [] });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, WA, BUTTON.rescatado);
+
+    expect(backend.listMyPersonsCalls).toHaveLength(1);
+    expect(backend.markFoundCalls).toHaveLength(0);
+    expect(transport.allText()).toContain("No encontramos registros");
+  });
+
+  it("ante un 403 (no es el dueno) responde el fallo amable sin revelar la causa", async () => {
+    const backend = new FakeBackend({ myPersonsResults: [ownedPersonFixture()], markFoundNotOwner: true });
+    const { deps, transport } = makeDeps(backend);
+
+    await send(deps, WA, BUTTON.rescatado, "1", BUTTON.confirmar);
+
+    expect(backend.markFoundCalls).toHaveLength(1);
+    const conversation = transport.allText();
+    expect(conversation).toContain("No pudimos marcar el registro");
+    expect(conversation).not.toContain("403");
+    expect(conversation).not.toContain("dueno");
   });
 });
 
@@ -568,13 +633,26 @@ describe("reencuentro: el buscador elige a quien conectar", () => {
     expect(conversation).not.toContain("sintetico");
   });
 
-  it("elegir un numero fuera de rango vuelve al menu SIN llamar a requestReunion", async () => {
+  it("un numero fuera de rango re-pide sin llamar a requestReunion (no expulsa)", async () => {
+    const backend = new FakeBackend({
+      searchResults: [publicPersonFixture({ nombre: "Jose Sintetico" })],
+    });
+    const { deps, transport, sessions } = makeDeps(backend);
+
+    await send(deps, WA, ...searchByName("Jose"), "9");
+
+    expect(backend.requestReunionCalls).toHaveLength(0);
+    expect((sessions.get(WA) as { step?: string } | undefined)?.step).toBe("choosing");
+    expect(transport.allText().toLowerCase()).toContain("no entendi");
+  });
+
+  it("el boton 'No, volver al inicio' sale sin conectar", async () => {
     const backend = new FakeBackend({
       searchResults: [publicPersonFixture({ nombre: "Jose Sintetico" })],
     });
     const { deps, sessions } = makeDeps(backend);
 
-    await send(deps, WA, ...searchByName("Jose"), "9");
+    await send(deps, WA, ...searchByName("Jose"), BUTTON.noConectar);
 
     expect(backend.requestReunionCalls).toHaveLength(0);
     expect(sessions.get(WA)).toEqual({ flow: "idle" });

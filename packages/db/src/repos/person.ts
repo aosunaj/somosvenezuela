@@ -4,6 +4,7 @@ import {
   DEFAULT_FUENTE,
   DEFAULT_VERIFICACION,
   personCreateSchema,
+  type OwnedPerson,
   type Person,
   type PersonCreate,
   type PublicPerson,
@@ -40,6 +41,12 @@ interface PersonSearchRow extends PersonPublicRow {
   score: number;
 }
 
+/** Columnas minimas para la vista del DUENO (sin contact_id ni datos de mas). */
+type OwnedPersonRow = Pick<PersonRow, "id" | "nombre" | "apellidos" | "zona" | "estado">;
+
+/** Tope de registros propios a listar (suficiente para un usuario; evita payloads enormes). */
+const OWNED_LIST_LIMIT = 50;
+
 export interface PersonRepo {
   /** ESCRITURA. Crea una persona en la tabla base. Devuelve el registro completo (interno). */
   create(input: PersonCreate): Promise<Person>;
@@ -49,6 +56,15 @@ export interface PersonRepo {
   getPublic(id: string): Promise<PublicPerson | null>;
   /** LECTURA PUBLICA. Busqueda difusa (pg_trgm) por nombre/zona/descripcion, ordenada por score. */
   searchPersonsPublic(query: string, zona?: string): Promise<PublicPersonResult[]>;
+  /**
+   * LECTURA DEL DUENO. Lista los registros ligados a un contacto (sus propios
+   * registros) para que el dueno elija cual marcar/borrar SIN pegar codigos. Lee la
+   * tabla base filtrando por contact_id, pero devuelve SOLO la vista del dueno
+   * (`OwnedPerson`): id + datos para reconocerlo + estado, NUNCA contact_id (guardrail
+   * #1). A diferencia de la vista publica, SI incluye registros de menores: son del
+   * propio dueno; nunca se expone contacto en ninguna respuesta.
+   */
+  listByContact(contactId: string): Promise<OwnedPerson[]>;
   /** BORRADO (derecho al olvido). Elimina la persona de la tabla base por id. */
   remove(id: string): Promise<void>;
   /**
@@ -137,6 +153,29 @@ export function createPersonRepo(client: DbClient): PersonRepo {
         const { score, ...publicRow } = row;
         return { ...publicRowToPublicPerson(publicRow), score };
       });
+    },
+
+    async listByContact(contactId: string): Promise<OwnedPerson[]> {
+      // Tabla base filtrada por el contacto dueno, seleccionando SOLO las columnas de
+      // la vista del dueno (jamas contact_id). Mas recientes primero.
+      const { data, error } = await client
+        .from("persons")
+        .select("id, nombre, apellidos, zona, estado")
+        .eq("contact_id", contactId)
+        .order("created_at", { ascending: false })
+        .limit(OWNED_LIST_LIMIT)
+        .returns<OwnedPersonRow[]>();
+
+      if (error) {
+        throw new DbError(`No se pudo listar los registros del dueno: ${error.message}`, error.code);
+      }
+      return (data ?? []).map((row) => ({
+        id: row.id,
+        nombre: row.nombre,
+        apellidos: row.apellidos ?? null,
+        zona: row.zona ?? null,
+        estado: row.estado,
+      }));
     },
 
     async remove(id: string): Promise<void> {

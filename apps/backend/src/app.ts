@@ -19,6 +19,7 @@ import { registerNeedRoutes } from "./routes/needs.js";
 import { registerRegisterLinkedRoutes } from "./routes/register-linked.js";
 import { registerDeleteSecureRoutes } from "./routes/delete-secure.js";
 import { registerMarkFoundSecureRoutes } from "./routes/mark-found-secure.js";
+import { registerPersonsMineRoutes } from "./routes/persons-mine.js";
 import { registerNotificationsRoutes } from "./routes/notifications.js";
 import { registerMatchRoutes } from "./routes/matches.js";
 import { registerReunionRoutes } from "./routes/reunion.js";
@@ -111,6 +112,11 @@ export async function buildApp(
     secureDeleteRepo: deps.secureDeleteRepo,
     personRepo: deps.personRepo,
     personStateAuditRepo: deps.personStateAuditRepo,
+  });
+  // "Mis registros" por canal: el dueno lista los suyos para marcar/borrar sin codigos.
+  registerPersonsMineRoutes(app, {
+    channelLinkRepo: deps.channelLinkRepo,
+    personRepo: deps.personRepo,
   });
   registerNotificationsRoutes(app, {
     notificationRepo: deps.notificationRepo,

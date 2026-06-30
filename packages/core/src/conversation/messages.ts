@@ -1,4 +1,20 @@
-import type { PublicNeed, PublicPerson, PublicPet, PublicZone } from "../schemas.js";
+import type { EstadoPersona } from "../enums.js";
+import type {
+  OwnedPerson,
+  PublicNeed,
+  PublicPerson,
+  PublicPet,
+  PublicZone,
+} from "../schemas.js";
+
+/** Etiquetas humanas y claras para el estado de un registro (sin jerga). */
+const ESTADO_LABEL: Record<EstadoPersona, string> = {
+  desaparecida: "desaparecida",
+  encontrada_viva: "encontrada con vida",
+  encontrada_herida: "encontrada herida",
+  fallecida: "fallecida",
+  reunida: "reunida",
+};
 
 // Textos de cara al usuario, en espanol neutral (sin voseo) y claros para gente
 // no tecnica. Lema interno: "Nadie se queda atras." (CLAUDE.md, guardrails).
@@ -21,6 +37,7 @@ export const BUTTON = {
   confirmar: "Confirmar",
   cancelar: "Cancelar",
   omitir: "Omitir",
+  noConectar: "No, volver al inicio",
 } as const;
 
 /** Teclado del menu principal. */
@@ -271,23 +288,44 @@ export function searchResults(
 }
 
 /**
- * Invitacion a CONECTAR tras mostrar resultados de personas. El buscador puede
- * elegir UNA persona por su numero para iniciar el reencuentro; su consentimiento es
- * sincrono (esta aqui). Si no quiere, cualquier otra cosa lo devuelve al menu. No
- * expone dato de contacto alguno (guardrail #1).
+ * Invitacion a CONECTAR tras mostrar resultados de personas. El buscador elige UNA
+ * persona TOCANDO el boton con su numero (1, 2...); su consentimiento es sincrono
+ * (esta aqui). Para no conectar, toca "No, volver al inicio". El numero es el de la
+ * LISTA (no un telefono): lo decimos explicito porque la confusion con el telefono
+ * dejaba a la gente colgada. No expone dato de contacto alguno (guardrail #1).
  */
 export function searchConnectPrompt(count: number): string {
+  // El "(del 1 al 1)" cuando hay UNA sola coincidencia no se entiende; lo evitamos.
+  const elige =
+    count === 1
+      ? "Si es la persona que buscas y quieres que les ayudemos a reunirse, toca el boton 1."
+      : "Si reconoces a alguien y quieres que les ayudemos a reunirse, toca el boton con su " +
+        `numero de la lista (del 1 al ${count}).`;
   return (
-    "Si reconoces a alguien y quieres que les ayudemos a reunirse, escribe su numero " +
-    `(del 1 al ${count}) y le avisaremos a quien lo registro para pedirle permiso. ` +
-    "Nadie comparte su contacto sin el si de ambas partes.\n" +
-    "Si prefieres no conectar ahora, escribe cualquier otra cosa para volver al inicio."
+    `${elige} Le avisaremos a quien lo registro para pedirle permiso; ` +
+    "nadie comparte su contacto sin el si de ambas partes.\n" +
+    'Si prefieres no conectar ahora, toca "No, volver al inicio".'
   );
 }
 
+/**
+ * Teclado para elegir a quien conectar: un boton por cada coincidencia (1, 2...),
+ * en filas de tres, mas un boton para volver sin conectar. Tocar elimina la
+ * ambiguedad con "su numero" (que la gente confundia con un telefono).
+ */
+export function connectButtons(count: number): string[][] {
+  const numbers = Array.from({ length: count }, (_, i) => String(i + 1));
+  const rows: string[][] = [];
+  for (let i = 0; i < numbers.length; i += 3) {
+    rows.push(numbers.slice(i, i + 3));
+  }
+  rows.push([BUTTON.noConectar]);
+  return rows;
+}
+
 export const REUNION_REQUEST_INVALID =
-  "No entendi el numero. Escribe el numero de la persona con la que quieres conectar, " +
-  "o cualquier otra cosa para volver al inicio.";
+  "No entendi cual elegiste. Toca el boton con el numero de la persona con la que quieres " +
+  'conectar (1, 2...), o "No, volver al inicio".';
 
 /**
  * Confirmacion al buscador tras pedir el reencuentro. AUN no se comparte contacto:
@@ -410,18 +448,57 @@ export function needsList(needs: readonly PublicNeed[]): string {
   return [header, ...lines].join("\n");
 }
 
+// ── Tus registros (lista del dueno para marcar / borrar SIN pegar codigos) ────
+//
+// Antes el bot pedia "pega el identificador". Nadie en una emergencia guarda esos
+// codigos: era un muro. Ahora el bot LISTA los registros que creaste desde este chat
+// y eliges TOCANDO un numero. El backend ya sabe cuales son tuyos por el canal.
+
+/**
+ * Lista numerada de TUS registros (vista del dueno). Muestra nombre, zona y estado
+ * en lenguaje claro. No incluye dato de contacto alguno (guardrail #1).
+ */
+export function myPersonsList(persons: readonly OwnedPerson[]): string {
+  const header = "Estos son tus registros:";
+  const lines = persons.map((p, i) => {
+    const apellidos = p.apellidos ? ` ${p.apellidos}` : "";
+    const zona = p.zona ? `, zona: ${p.zona}` : "";
+    return `${i + 1}. ${p.nombre}${apellidos}${zona} — estado: ${ESTADO_LABEL[p.estado]}`;
+  });
+  return [header, ...lines].join("\n");
+}
+
+/**
+ * Teclado para elegir uno de TUS registros: un boton por registro (1, 2...), en filas
+ * de tres, mas Cancelar. Tocar evita pegar codigos (lo que antes trababa a la gente).
+ */
+export function pickPersonButtons(count: number): string[][] {
+  const numbers = Array.from({ length: count }, (_, i) => String(i + 1));
+  const rows: string[][] = [];
+  for (let i = 0; i < numbers.length; i += 3) {
+    rows.push(numbers.slice(i, i + 3));
+  }
+  rows.push([BUTTON.cancelar]);
+  return rows;
+}
+
 // ── Borrado ──────────────────────────────────────────────────────────────────
 
-export const DELETE_ASK_ID =
-  "Para borrar un registro necesito su identificador. Pegalo aqui tal como lo recibiste.";
+export const DELETE_PICK =
+  "Toca el numero del registro que quieres borrar, o pulsa Cancelar.";
 
-export const DELETE_INVALID_ID =
-  "Ese identificador no tiene el formato correcto. Revisa y vuelve a pegarlo.";
+/** Cuando el canal no tiene registros propios en este chat: nada que borrar. */
+export const DELETE_NONE =
+  "No encontramos registros tuyos en este chat. Solo puedes borrar los que registraste " +
+  "desde aqui. Si necesitas algo mas, escribe /ayuda.";
 
-/** Pide confirmacion antes de borrar; el id se muestra para que el usuario lo verifique. */
-export function deleteConfirm(personId: string): string {
+export const DELETE_PICK_INVALID =
+  "No entendi cual elegiste. Toca el numero de la lista, o pulsa Cancelar.";
+
+/** Pide confirmacion antes de borrar; muestra el NOMBRE elegido (no un codigo). */
+export function deleteConfirm(nombre: string): string {
   return (
-    `Vas a borrar el registro ${personId}.\n` +
+    `Vas a borrar el registro de ${nombre}.\n` +
     "Esta accion no se puede deshacer. ¿Confirmas el borrado?"
   );
 }
@@ -430,25 +507,30 @@ export const DELETE_DONE =
   "Registro borrado. Si necesitas algo mas, aqui estamos.";
 
 export const DELETE_FAILED =
-  "No pudimos borrar el registro ahora mismo. Comprueba el identificador o intentalo mas tarde.";
+  "No pudimos borrar el registro ahora mismo. Por favor, intentalo de nuevo en un momento.";
 
 // ── Rescatado (el dueno marca su registro como encontrado con vida) ──────────
 
-export const MARK_FOUND_ASK_ID =
-  "Que alegria. Para marcar a tu registro como encontrado con vida necesito su " +
-  "identificador. Pegalo aqui tal como lo recibiste.";
+export const MARK_FOUND_PICK =
+  "Que alegria. Toca el numero del registro que quieres marcar como encontrado con vida, " +
+  "o pulsa Cancelar.";
 
-export const MARK_FOUND_INVALID_ID =
-  "Ese identificador no tiene el formato correcto. Revisa y vuelve a pegarlo.";
+/** Cuando el canal no tiene registros propios en este chat: nada que marcar. */
+export const MARK_FOUND_NONE =
+  "No encontramos registros tuyos en este chat. Solo puedes marcar los que registraste " +
+  "desde aqui. Si necesitas algo mas, escribe /ayuda.";
+
+export const MARK_FOUND_PICK_INVALID =
+  "No entendi cual elegiste. Toca el numero de la lista, o pulsa Cancelar.";
 
 /**
  * Pide confirmacion antes de marcar como encontrada. Aclara que es un reporte del
  * dueno (sin verificar): la confirmacion oficial la hace una entidad verificada
- * aparte. El id se muestra para que el usuario lo verifique.
+ * aparte. Muestra el NOMBRE elegido (no un codigo).
  */
-export function markFoundConfirm(personId: string): string {
+export function markFoundConfirm(nombre: string): string {
   return (
-    `Vas a marcar el registro ${personId} como ENCONTRADO con vida.\n` +
+    `Vas a marcar a ${nombre} como ENCONTRADO con vida.\n` +
     "Quedara como reporte tuyo (sin verificar) hasta que una entidad lo confirme. " +
     "¿Confirmas?"
   );
@@ -458,4 +540,4 @@ export const MARK_FOUND_DONE =
   "Marcado como encontrado con vida. Gracias por avisar: nadie se queda atras.";
 
 export const MARK_FOUND_FAILED =
-  "No pudimos marcar el registro ahora mismo. Comprueba el identificador o intentalo mas tarde.";
+  "No pudimos marcar el registro ahora mismo. Por favor, intentalo de nuevo en un momento.";
