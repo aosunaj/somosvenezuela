@@ -14,6 +14,9 @@ export * from "./secure-delete.js";
 export * from "./person-state-audit.js";
 export * from "./zone.js";
 export * from "./need.js";
+export * from "./relay.js";
+export * from "./audit.js";
+export * from "./consent.js";
 
 import type { DbClient } from "../client.js";
 import { createChannelRepo, type ChannelRepo } from "./channel.js";
@@ -41,6 +44,9 @@ import {
   createPersonStateAuditRepo,
   type PersonStateAuditRepo,
 } from "./person-state-audit.js";
+import { createRelayRepo, type RelayRepo } from "./relay.js";
+import { createAuditRepo, type AuditRepo } from "./audit.js";
+import { createConsentRepo, type ConsentRepo } from "./consent.js";
 
 /** Conjunto de repositorios de la capa de datos. */
 export interface Repos {
@@ -67,6 +73,12 @@ export interface Repos {
   secureDelete: SecureDeleteRepo;
   /** INTERNO: solo backend. Auditoria de cambios de estado sensibles (guardrail #8). */
   personStateAudit: PersonStateAuditRepo;
+  /** INTERNO: solo backend. Relay de mensajes entre dos canales tras doble consentimiento. */
+  relay: RelayRepo;
+  /** INTERNO: solo backend. Auditoría inmutable de conexiones automáticas (auto_connection_audit). */
+  autoConnectionAudit: AuditRepo;
+  /** INTERNO: solo backend. Consentimiento bilateral y apertura de relay (plpgsql). */
+  consent: ConsentRepo;
 }
 
 /**
@@ -88,5 +100,8 @@ export function createRepos(client: DbClient): Repos {
     matches: createMatchRepo(client),
     secureDelete: createSecureDeleteRepo(client),
     personStateAudit: createPersonStateAuditRepo(client),
+    relay: createRelayRepo(client),
+    autoConnectionAudit: createAuditRepo(client),
+    consent: createConsentRepo(client),
   };
 }

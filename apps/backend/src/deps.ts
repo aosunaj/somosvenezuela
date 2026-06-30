@@ -1,6 +1,8 @@
 import type {
+  AuditRepo,
   ChannelLinkRepo,
   ChannelRepo,
+  ConsentRepo,
   MatchRepo,
   NeedRepo,
   NotificationRepo,
@@ -8,6 +10,7 @@ import type {
   PersonStateAuditRepo,
   PetRepo,
   PetSearchRepo,
+  RelayRepo,
   SearchRepo,
   SecureDeleteRepo,
   ZoneRepo,
@@ -49,4 +52,24 @@ export interface AppDeps {
    * En Fase 2, el borrado por el dueno via canal usara el token del bot.
    */
   serviceToken: string | undefined;
+  /**
+   * Relay de mensajes entre dos canales tras doble consentimiento (relay_sessions).
+   * SENSIBLE: solo backend.
+   */
+  relayRepo: RelayRepo;
+  /**
+   * Auditoría inmutable de conexiones automáticas (auto_connection_audit).
+   * SENSIBLE: solo backend.
+   */
+  auditRepo: AuditRepo;
+  /**
+   * Consentimiento bilateral y apertura de relay vía plpgsql.
+   * SENSIBLE: solo backend.
+   */
+  consentRepo: ConsentRepo;
+  /**
+   * Umbral de score para el auto-path (por defecto 0.85 del env).
+   * Por debajo → gate humano. La IA sugiere, los humanos confirman (guardrail #4).
+   */
+  autoMatchThreshold: number;
 }
