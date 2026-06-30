@@ -42,8 +42,9 @@ async function send(deps: UpdateDeps, chatId: number, ...texts: string[]): Promi
 
 /**
  * Secuencia de textos que completa la BUSQUEDA GUIADA con solo el nombre `query`
- * (apellidos, edad, zona y senas omitidos), disparando la busqueda. Util para los
- * tests que solo necesitan llegar a los resultados sin rellenar todos los campos.
+ * (apellidos, edad, zona y senas omitidos) y responde la pregunta de menor (R2-4a)
+ * con "No", disparando la busqueda. Util para los tests que solo necesitan llegar a
+ * los resultados sin rellenar todos los campos.
  */
 function searchByName(query: string): string[] {
   return [
@@ -52,7 +53,8 @@ function searchByName(query: string): string[] {
     BUTTON.omitir, // apellidos
     BUTTON.omitir, // edad
     BUTTON.omitir, // zona
-    BUTTON.omitir, // senas -> dispara la busqueda
+    BUTTON.omitir, // senas
+    "No", // ¿es menor? (R2-4a) -> dispara la busqueda
   ];
 }
 
@@ -162,7 +164,7 @@ describe("busqueda guiada", () => {
     });
     const { deps, transport } = makeDeps(backend);
 
-    // Busqueda guiada: nombre -> apellidos -> edad (omitida) -> zona -> senas.
+    // Busqueda guiada: nombre -> apellidos -> edad (omitida) -> zona -> senas -> menor.
     await send(
       deps,
       CHAT,
@@ -171,7 +173,8 @@ describe("busqueda guiada", () => {
       "Sintetico", // apellidos
       BUTTON.omitir, // edad
       "Zona Sur", // zona
-      "chaqueta azul", // senas -> dispara la busqueda
+      "chaqueta azul", // senas
+      "No", // ¿es menor? (R2-4a) -> dispara la busqueda
     );
 
     // El backend recibio la query con nombre + apellidos juntos, la zona y las senas.
@@ -201,7 +204,8 @@ describe("busqueda guiada", () => {
       BUTTON.omitir, // apellidos
       BUTTON.omitir, // edad
       BUTTON.omitir, // zona
-      BUTTON.omitir, // senas -> con solo el nombre ya busca
+      BUTTON.omitir, // senas
+      "No", // ¿es menor? (R2-4a) -> con solo el nombre ya busca
     );
 
     expect(backend.searchCalls).toHaveLength(1);
@@ -221,6 +225,7 @@ describe("busqueda guiada", () => {
       BUTTON.omitir,
       BUTTON.omitir,
       BUTTON.omitir,
+      "No", // ¿es menor? (R2-4a) -> dispara la busqueda
     );
 
     expect(backend.searchCalls).toHaveLength(1);
