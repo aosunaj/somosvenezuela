@@ -280,12 +280,25 @@ type RegisterState = Extract<ConversationState, { flow: "register" }>;
 function stepRegister(state: RegisterState, input: FlowInput): StepResult {
   if (input.kind === "effect_result") {
     if (state.step !== "submitting" || input.result.type !== "create_person") {
-      // Resultado inesperado: reofrecemos confirmar sin perder el draft.
-      return result(state, [reply(M.registerSummary(requireNombre(state.draft)), M.confirmButtons())]);
+      // Resultado inesperado: volvemos a 'confirm' (NO mantenemos el step actual, que
+      // podria ser 'submitting' con botones muertos) reofreciendo confirmar sin perder
+      // el draft, de modo que Confirmar/Cancelar siempre funcionen.
+      return result(
+        { flow: "register", step: "confirm", draft: state.draft },
+        [reply(M.registerSummary(requireNombre(state.draft)), M.confirmButtons())],
+      );
     }
-    return input.result.ok
-      ? toMenu(M.registerDone(input.result.id))
-      : result(state, [reply(M.REGISTER_FAILED, M.confirmButtons())]);
+    if (input.result.ok) {
+      return toMenu(M.registerDone(input.result.id));
+    }
+    // El backend fallo: volvemos a 'confirm' (NO 'submitting') para que los botones
+    // Confirmar/Cancelar vuelvan a funcionar y la persona pueda reintentar el envio
+    // sin perder los datos cargados. En 'submitting' el texto se ignora y la dejaba
+    // atascada (emergencia: un usuario trabado al registrar = una persona fuera del sistema).
+    return result(
+      { flow: "register", step: "confirm", draft: state.draft },
+      [reply(M.REGISTER_FAILED, M.confirmButtons())],
+    );
   }
 
   // input.kind === 'text'
@@ -454,12 +467,24 @@ const PET_NEXT: Record<
 function stepRegisterPet(state: RegisterPetState, input: FlowInput): StepResult {
   if (input.kind === "effect_result") {
     if (state.step !== "submitting" || input.result.type !== "create_pet") {
-      // Resultado inesperado: reofrecemos confirmar sin perder el draft.
-      return result(state, [reply(M.petSummary(state.draft), M.confirmButtons())]);
+      // Resultado inesperado: volvemos a 'confirm' (NO mantenemos el step actual, que
+      // podria ser 'submitting' con botones muertos) reofreciendo confirmar sin perder
+      // el draft, de modo que Confirmar/Cancelar siempre funcionen.
+      return result(
+        { flow: "register_pet", step: "confirm", draft: state.draft },
+        [reply(M.petSummary(state.draft), M.confirmButtons())],
+      );
     }
-    return input.result.ok
-      ? toMenu(M.registerPetDone(input.result.id))
-      : result(state, [reply(M.REGISTER_PET_FAILED, M.confirmButtons())]);
+    if (input.result.ok) {
+      return toMenu(M.registerPetDone(input.result.id));
+    }
+    // El backend fallo: volvemos a 'confirm' (NO 'submitting') para que los botones
+    // Confirmar/Cancelar vuelvan a funcionar y se pueda reintentar el envio sin perder
+    // los datos cargados (en 'submitting' el texto se ignora y dejaba el flujo atascado).
+    return result(
+      { flow: "register_pet", step: "confirm", draft: state.draft },
+      [reply(M.REGISTER_PET_FAILED, M.confirmButtons())],
+    );
   }
 
   // input.kind === 'text'
