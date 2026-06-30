@@ -8,6 +8,7 @@ import type { AppDeps } from "../src/deps.js";
 
 const RELAY_ID = "e0000001-0000-4000-8000-000000000001";
 const CHANNEL_ID = "c0000001-0000-4000-8000-000000000001";
+const CHAT_ID = "tg-12345";
 
 function makeDeps(): AppDeps {
   return {
@@ -17,7 +18,12 @@ function makeDeps(): AppDeps {
     petSearchRepo: {} as AppDeps["petSearchRepo"],
     zoneRepo: {} as AppDeps["zoneRepo"],
     needRepo: {} as AppDeps["needRepo"],
-    channelLinkRepo: {} as AppDeps["channelLinkRepo"],
+    channelLinkRepo: {
+      // Resuelve (plataforma, chatId) → channel_id interno. La ruta close lo usa.
+      findChannelIdByChannel: vi.fn().mockResolvedValue(CHANNEL_ID),
+      findContactByChannel: vi.fn().mockResolvedValue(null),
+      ensureChannel: vi.fn(),
+    } as unknown as AppDeps["channelLinkRepo"],
     channelRepo: {} as AppDeps["channelRepo"],
     notificationRepo: {
       create: vi.fn().mockResolvedValue({ id: "n-1" }),
@@ -48,24 +54,47 @@ function makeDeps(): AppDeps {
 }
 
 describe("POST /relay/:id/close", () => {
-  it("400 si falta channelId (quien cierra el relay)", async () => {
+  it("400 si falta channel (quien cierra el relay)", async () => {
     const app = await buildApp(makeDeps());
     const res = await app.inject({
       method: "POST",
       url: `/relay/${RELAY_ID}/close`,
-      payload: {}, // sin channelId
+      payload: {}, // sin channel
     });
     expect(res.statusCode).toBe(400);
   });
 
-  it("200 al cerrar relay con channelId valido", async () => {
+  it("400 si el viejo contrato channelId (UUID directo) se envia — ya no se acepta", async () => {
     const app = await buildApp(makeDeps());
     const res = await app.inject({
       method: "POST",
       url: `/relay/${RELAY_ID}/close`,
-      payload: { channelId: CHANNEL_ID },
+      payload: { channelId: CHANNEL_ID }, // contrato viejo, rechazado por .strict()
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("200 al cerrar relay con channel (plataforma + chatId) valido", async () => {
+    const app = await buildApp(makeDeps());
+    const res = await app.inject({
+      method: "POST",
+      url: `/relay/${RELAY_ID}/close`,
+      payload: { channel: { plataforma: "telegram", chatId: CHAT_ID } },
     });
     expect(res.statusCode).toBe(200);
+  });
+
+  it("404 si el canal (plataforma, chatId) no resuelve a channel_id", async () => {
+    const deps = makeDeps();
+    (deps.channelLinkRepo as { findChannelIdByChannel: ReturnType<typeof vi.fn> })
+      .findChannelIdByChannel.mockResolvedValue(null);
+    const app = await buildApp(deps);
+    const res = await app.inject({
+      method: "POST",
+      url: `/relay/${RELAY_ID}/close`,
+      payload: { channel: { plataforma: "telegram", chatId: CHAT_ID } },
+    });
+    expect(res.statusCode).toBe(404);
   });
 
   it("cierra el relay y notifica al otro lado", async () => {
@@ -74,7 +103,7 @@ describe("POST /relay/:id/close", () => {
     await app.inject({
       method: "POST",
       url: `/relay/${RELAY_ID}/close`,
-      payload: { channelId: CHANNEL_ID },
+      payload: { channel: { plataforma: "telegram", chatId: CHAT_ID } },
     });
     expect((deps.relayRepo as { closeRelay: ReturnType<typeof vi.fn> }).closeRelay).toHaveBeenCalledWith(RELAY_ID);
     expect((deps.notificationRepo as { create: ReturnType<typeof vi.fn> }).create).toHaveBeenCalledOnce();

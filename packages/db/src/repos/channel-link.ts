@@ -52,6 +52,15 @@ export interface ChannelLinkRepo {
     plataforma: PlataformaCanal,
     chatId: string,
   ): Promise<string | null>;
+  /**
+   * Resuelve el channel_id (UUID interno) de un canal (plataforma, chatId), o null.
+   * Las rutas by-channel (relay close, rescatado) reciben (plataforma, chatId) del
+   * bot y necesitan el UUID interno para operar sin exponer PII (guardrail #1).
+   */
+  findChannelIdByChannel(
+    plataforma: PlataformaCanal,
+    chatId: string,
+  ): Promise<string | null>;
 }
 
 /** Construye el helper de vinculo sobre un cliente Supabase de servicio. */
@@ -110,6 +119,14 @@ export function createChannelLinkRepo(client: DbClient): ChannelLinkRepo {
     ): Promise<string | null> {
       const row = await findChannelRow(plataforma, chatId);
       return row?.contact_id ?? null;
+    },
+
+    async findChannelIdByChannel(
+      plataforma: PlataformaCanal,
+      chatId: string,
+    ): Promise<string | null> {
+      const row = await findChannelRow(plataforma, chatId);
+      return row?.id ?? null;
     },
   };
 }

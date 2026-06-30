@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { plataformaCanalSchema } from "core";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import type { AppDeps } from "../deps.js";
@@ -11,12 +12,24 @@ import { apiError } from "../errors.js";
 //
 // El reveal bilateral (POST /relay/:id/reveal) se implementa en PR4.
 //
-// PRIVACIDAD: ninguna respuesta expone PII.
+// PRIVACIDAD: ninguna respuesta expone PII. El cliente envía (plataforma, chatId)
+// — el mismo patrón by-channel que delete-secure/mark-found-secure/persons-mine —
+// y el backend resuelve el channel_id (UUID interno) server-side. El bot NUNCA
+// conoce ni envía channel_id.
 
-const closeBodySchema = z
+/**
+ * Schema del body de POST /relay/:id/close. Exportado para tests de CONTRATO:
+ * el cliente del bot debe producir un payload que valide contra este schema real.
+ */
+export const relayCloseBodySchema = z
   .object({
-    /** UUID del canal de quien solicita el cierre. */
-    channelId: z.string().uuid(),
+    /** Identidad de canal de quien solicita el cierre (plataforma + chatId). */
+    channel: z
+      .object({
+        plataforma: plataformaCanalSchema,
+        chatId: z.string().trim().min(1),
+      })
+      .strict(),
   })
   .strict();
 
@@ -32,12 +45,22 @@ export function registerRelayRoutes(app: FastifyInstance, deps: AppDeps): void {
     url: "/relay/:id/close",
     schema: {
       params: z.object({ id: z.string().uuid() }),
-      body: closeBodySchema,
+      body: relayCloseBodySchema,
       response: { 200: closeResponseSchema, 404: errorResponseSchema },
     },
     handler: async (request, reply) => {
       const { id: relayId } = request.params;
-      const { channelId } = request.body;
+      const { channel } = request.body;
+
+      // Resolver el channel_id interno desde (plataforma, chatId). Sin canal
+      // resuelto no hay relay que cerrar → 404 (no revelamos detalles).
+      const channelId = await deps.channelLinkRepo.findChannelIdByChannel(
+        channel.plataforma,
+        channel.chatId,
+      );
+      if (channelId === null) {
+        return reply.code(404).send(apiError("not_found", "Relay no encontrado o ya cerrado."));
+      }
 
       // Confirmar que hay un relay activo para este canal antes de cerrar.
       const relay = await deps.relayRepo.getActiveRelay(channelId);
