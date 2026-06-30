@@ -256,7 +256,7 @@ describe("flujo registrar (completo hasta el efecto y la respuesta final)", () =
     expect(effect.data.edad == null).toBe(true);
   });
 
-  it("respuesta final con fallo del efecto re-ofrece confirmar sin perder draft", () => {
+  it("fallo del backend vuelve a 'confirm' con botones vivos y permite REINTENTAR sin perder el draft", () => {
     const res = run(initialState, [
       text(BUTTON.registrar),
       text("Ana"),
@@ -270,8 +270,85 @@ describe("flujo registrar (completo hasta el efecto y la respuesta final)", () =
       kind: "effect_result",
       result: { type: "create_person", ok: false },
     });
+    // Tras el fallo NO queda en 'submitting' (botones muertos): vuelve a 'confirm'.
     expect(failed.state.flow).toBe("register");
+    expect((failed.state as Extract<ConversationState, { flow: "register" }>).step).toBe(
+      "confirm",
+    );
     expect(joinReplies(failed)).toContain("intentalo");
+    // Ofrece de nuevo los botones Confirmar/Cancelar para reintentar.
+    expect(failed.replies.at(-1)?.buttons?.flat()).toContain(BUTTON.confirmar);
+
+    // Reintentar (Confirmar) vuelve a emitir create_person con los MISMOS datos.
+    const retried = step(failed.state, text(BUTTON.confirmar));
+    expect(retried.replies).toHaveLength(0);
+    const effect = retried.effect as Extract<Effect, { type: "create_person" }>;
+    expect(effect.type).toBe("create_person");
+    expect(effect.data.nombre).toBe("Ana");
+    expect((retried.state as Extract<ConversationState, { flow: "register" }>).step).toBe(
+      "submitting",
+    );
+
+    // Tras un segundo intento OK, el registro se completa con normalidad.
+    const done = step(retried.state, {
+      kind: "effect_result",
+      result: { type: "create_person", ok: true, id: SYNTH_PERSON_ID },
+    });
+    expect(done.state).toEqual({ flow: "idle" });
+    expect(joinReplies(done)).toContain("Registrado");
+  });
+
+  it("tras un fallo del backend, Cancelar tambien funciona (no queda atascada)", () => {
+    const res = run(initialState, [
+      text(BUTTON.registrar),
+      text("Ana"),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.confirmar),
+    ]);
+    const failed = step(res.state, {
+      kind: "effect_result",
+      result: { type: "create_person", ok: false },
+    });
+    const cancelled = step(failed.state, text(BUTTON.cancelar));
+    expect(cancelled.state).toEqual({ flow: "idle" });
+    expect(cancelled.effect).toBeUndefined();
+  });
+
+  it("resultado INESPERADO en submitting vuelve a 'confirm' y permite reintentar", () => {
+    // En submitting llega un effect_result de OTRO tipo (desajuste del adaptador):
+    // antes mantenia 'submitting' con botones muertos; ahora vuelve a 'confirm'.
+    const res = run(initialState, [
+      text(BUTTON.registrar),
+      text("Ana"),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.confirmar),
+    ]);
+    expect((res.state as Extract<ConversationState, { flow: "register" }>).step).toBe(
+      "submitting",
+    );
+    const unexpected = step(res.state, {
+      kind: "effect_result",
+      result: { type: "delete_person", ok: true },
+    });
+    // Vuelve a 'confirm' con el resumen y botones vivos (no queda atascada).
+    expect(unexpected.state.flow).toBe("register");
+    expect((unexpected.state as Extract<ConversationState, { flow: "register" }>).step).toBe(
+      "confirm",
+    );
+    expect(joinReplies(unexpected)).toContain("Confirmas");
+    expect(unexpected.replies.at(-1)?.buttons?.flat()).toContain(BUTTON.confirmar);
+
+    // Reintentar (Confirmar) vuelve a emitir create_person con los MISMOS datos.
+    const retried = step(unexpected.state, text(BUTTON.confirmar));
+    const effect = retried.effect as Extract<Effect, { type: "create_person" }>;
+    expect(effect.type).toBe("create_person");
+    expect(effect.data.nombre).toBe("Ana");
   });
 
   it("la respuesta final entrega el id del registro para poder borrarlo luego", () => {
@@ -389,7 +466,7 @@ describe("flujo registrar mascota (completo hasta el efecto y la respuesta final
     expect(res.state.flow).toBe("register_pet");
   });
 
-  it("respuesta final con fallo del efecto re-ofrece confirmar", () => {
+  it("fallo del backend vuelve a 'confirm' con botones vivos y permite REINTENTAR sin perder el draft", () => {
     const res = run(initialState, [
       text(BUTTON.registrarMascota),
       text("Michi"),
@@ -402,8 +479,64 @@ describe("flujo registrar mascota (completo hasta el efecto y la respuesta final
       kind: "effect_result",
       result: { type: "create_pet", ok: false },
     });
+    // Tras el fallo NO queda en 'submitting' (botones muertos): vuelve a 'confirm'.
     expect(failed.state.flow).toBe("register_pet");
+    expect((failed.state as Extract<ConversationState, { flow: "register_pet" }>).step).toBe(
+      "confirm",
+    );
     expect(joinReplies(failed)).toContain("intentalo");
+    expect(failed.replies.at(-1)?.buttons?.flat()).toContain(BUTTON.confirmar);
+
+    // Reintentar (Confirmar) vuelve a emitir create_pet con los MISMOS datos.
+    const retried = step(failed.state, text(BUTTON.confirmar));
+    expect(retried.replies).toHaveLength(0);
+    const effect = retried.effect as Extract<Effect, { type: "create_pet" }>;
+    expect(effect.type).toBe("create_pet");
+    expect(effect.data.nombre).toBe("Michi");
+    expect(
+      (retried.state as Extract<ConversationState, { flow: "register_pet" }>).step,
+    ).toBe("submitting");
+
+    // Tras un segundo intento OK, el registro de mascota se completa con normalidad.
+    const done = step(retried.state, {
+      kind: "effect_result",
+      result: { type: "create_pet", ok: true, id: SYNTH_PET_ID },
+    });
+    expect(done.state).toEqual({ flow: "idle" });
+    expect(joinReplies(done)).toContain("Registrada");
+  });
+
+  it("resultado INESPERADO en submitting vuelve a 'confirm' y permite reintentar", () => {
+    // En submitting llega un effect_result de OTRO tipo (desajuste del adaptador):
+    // antes mantenia 'submitting' con botones muertos; ahora vuelve a 'confirm'.
+    const res = run(initialState, [
+      text(BUTTON.registrarMascota),
+      text("Michi"),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.omitir),
+      text(BUTTON.confirmar),
+    ]);
+    expect(
+      (res.state as Extract<ConversationState, { flow: "register_pet" }>).step,
+    ).toBe("submitting");
+    const unexpected = step(res.state, {
+      kind: "effect_result",
+      result: { type: "delete_person", ok: true },
+    });
+    // Vuelve a 'confirm' con el resumen y botones vivos (no queda atascada).
+    expect(unexpected.state.flow).toBe("register_pet");
+    expect(
+      (unexpected.state as Extract<ConversationState, { flow: "register_pet" }>).step,
+    ).toBe("confirm");
+    expect(joinReplies(unexpected)).toContain("Michi");
+    expect(unexpected.replies.at(-1)?.buttons?.flat()).toContain(BUTTON.confirmar);
+
+    // Reintentar (Confirmar) vuelve a emitir create_pet con los MISMOS datos.
+    const retried = step(unexpected.state, text(BUTTON.confirmar));
+    const effect = retried.effect as Extract<Effect, { type: "create_pet" }>;
+    expect(effect.type).toBe("create_pet");
+    expect(effect.data.nombre).toBe("Michi");
   });
 
   it("/cancelar en mitad del registro de mascota vuelve a idle", () => {
