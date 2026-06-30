@@ -49,7 +49,8 @@ function searchByName(query: string): ConversationInput[] {
     text(BUTTON.omitir), // apellidos
     text(BUTTON.omitir), // edad
     text(BUTTON.omitir), // zona
-    text(BUTTON.omitir), // senas -> dispara la busqueda
+    text(BUTTON.omitir), // senas
+    text("no"), // menor → adulto (paso explícito R2-4a, no omitible)
   ];
 }
 
@@ -546,7 +547,7 @@ describe("flujo buscar guiado", () => {
     expect(buttons).toContain(BUTTON.omitir);
   });
 
-  it("recorre nombre -> apellidos -> edad -> zona -> senas y dispara search_persons", () => {
+  it("recorre nombre -> apellidos -> edad -> zona -> senas -> menor y dispara search_persons", () => {
     // nombre + apellidos => query unida; zona y senas => campos estructurados.
     const res = run(initialState, [
       text(BUTTON.buscar),
@@ -554,7 +555,8 @@ describe("flujo buscar guiado", () => {
       text("Perez"), // apellidos
       text(BUTTON.omitir), // edad (no la usa el matcher hoy)
       text("Caracas"), // zona
-      text("vestido rojo"), // senas -> dispara la busqueda
+      text("vestido rojo"), // senas
+      text("no"), // menor → adulto (paso explícito R2-4a)
     ]);
     expect(res.replies).toHaveLength(0);
     const effect = res.effect as Extract<Effect, { type: "search_persons" }>;
@@ -564,6 +566,8 @@ describe("flujo buscar guiado", () => {
     // Zona y senas viajan como campos estructurados ponderados del matcher.
     expect(effect.zona).toBe("Caracas");
     expect(effect.descripcion).toBe("vestido rojo");
+    // es_menor=false porque se respondió "no" explícitamente (R2-4a).
+    expect(effect.es_menor).toBe(false);
     expect((res.state as Extract<ConversationState, { flow: "search" }>).step).toBe(
       "searching",
     );
@@ -580,6 +584,7 @@ describe("flujo buscar guiado", () => {
       text("40"), // edad valida
       text(BUTTON.omitir), // zona
       text(BUTTON.omitir), // senas
+      text("no"), // menor (paso explícito R2-4a)
     ]);
     const effect = res.effect as Extract<Effect, { type: "search_persons" }>;
     expect(effect.query).toBe("Luis");
@@ -595,6 +600,8 @@ describe("flujo buscar guiado", () => {
     expect(effect.query).toBe("Maria");
     expect(effect.zona).toBeUndefined();
     expect(effect.descripcion).toBeUndefined();
+    // es_menor viene del paso explícito (default "no" en searchByName).
+    expect(effect.es_menor).toBe(false);
   });
 
   it("buscar con solo la zona (nombre omitido) tambien dispara la busqueda", () => {
@@ -605,6 +612,7 @@ describe("flujo buscar guiado", () => {
       text(BUTTON.omitir), // edad
       text("Maracaibo"), // zona
       text(BUTTON.omitir), // senas
+      text("no"), // menor (paso explícito R2-4a)
     ]);
     const effect = res.effect as Extract<Effect, { type: "search_persons" }>;
     expect(effect.type).toBe("search_persons");

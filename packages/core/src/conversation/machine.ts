@@ -669,6 +669,8 @@ function stepSearch(state: SearchState, input: FlowInput): StepResult {
       return searchSetOptionalTexto(draft, text, "zona", "descripcion", M.SEARCH_ASK_DESCRIPCION);
     case "descripcion":
       return searchSetDescripcion(draft, text);
+    case "menor":
+      return searchSetMenor(draft, text);
   }
 }
 
@@ -745,12 +747,53 @@ function searchSetDescripcion(draft: SearchDraft, text: string): StepResult {
       [reply(M.SEARCH_EMPTY), reply(M.SEARCH_ASK_NOMBRE, M.skipButtons())],
     );
   }
-  // Emite el efecto con los campos estructurados que el matcher pondera. El adaptador
-  // buscara y re-inyectara los resultados. Sin contacto: vista publica (guardrail #1).
+  // Avanza al paso de la pregunta de menor (R2-4a) antes de buscar.
+  // No se emite el efecto aun: primero recogemos es_menor de forma explícita.
   return result(
-    { flow: "search", step: "searching", draft: full },
-    [],
-    buildSearchEffect(full),
+    { flow: "search", step: "menor", draft: full },
+    [reply(M.SEARCH_ASK_MENOR, M.menorButtons())],
+  );
+}
+
+// Tokens para la pregunta de menor (R2-4a): sí / no.
+const MENOR_SI_TOKENS: ReadonlySet<string> = new Set([
+  "si",
+  "sí",
+  "s",
+  "yes",
+  "y",
+  "menor",
+  normalizeToken("Sí"),
+]);
+
+const MENOR_NO_TOKENS: ReadonlySet<string> = new Set([
+  "no",
+  "n",
+  "adulto",
+  "adulta",
+  "mayor",
+  normalizeToken("No"),
+]);
+
+/**
+ * Paso EXPLÍCITO (R2-4a): recoge si la persona buscada es menor de edad.
+ * Acepta Sí / No. Cualquier otra entrada re-pide. Nunca tiene default silencioso.
+ * Al confirmar, emite el efecto search_persons con es_menor.
+ */
+function searchSetMenor(draft: SearchDraft, text: string): StepResult {
+  const token = normalizeToken(text);
+  if (MENOR_SI_TOKENS.has(token)) {
+    const full: SearchDraft = { ...draft, es_menor: true };
+    return result({ flow: "search", step: "searching", draft: full }, [], buildSearchEffect(full));
+  }
+  if (MENOR_NO_TOKENS.has(token)) {
+    const full: SearchDraft = { ...draft, es_menor: false };
+    return result({ flow: "search", step: "searching", draft: full }, [], buildSearchEffect(full));
+  }
+  // Respuesta no reconocida: re-pide sin avanzar.
+  return result(
+    { flow: "search", step: "menor", draft },
+    [reply(M.SEARCH_MENOR_INVALID, M.menorButtons())],
   );
 }
 
@@ -777,11 +820,15 @@ function buildSearchEffect(draft: SearchDraft): Effect {
     query: string;
     zona?: string;
     descripcion?: string;
+    es_menor?: boolean;
   } = { type: "search_persons", query };
   if (draft.zona != null && draft.zona !== "") effect.zona = draft.zona;
   if (draft.descripcion != null && draft.descripcion !== "") {
     effect.descripcion = draft.descripcion;
   }
+  // Propaga es_menor SOLO si fue explícitamente recogido (R2-4a).
+  // El backend lo confirma server-side de forma conservadora (judgment-r3 item 5).
+  if (draft.es_menor != null) effect.es_menor = draft.es_menor;
   return effect;
 }
 

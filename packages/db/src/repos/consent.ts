@@ -28,7 +28,24 @@ export type ConsentParty = "searcher" | "registrant";
 
 // ── Interfaz del repositorio ────────────────────────────────────────────────
 
+/** Input para crear una consent_session. */
+export interface OpenConsentSessionInput {
+  readonly matchId: string;
+  readonly searcherChannelId: string;
+  readonly registrantChannelId: string;
+  /** Expiry in hours. Defaults to 72 if not provided. */
+  readonly ttlHours?: number;
+}
+
 export interface ConsentRepo {
+  /**
+   * Crea una nueva consent_session para el match dado.
+   * Retorna el id de la sesion creada.
+   * Esto NO usa plpgsql: la creacion es una escritura simple INSERT
+   * (la atomicidad del doble opt-in la gestiona accept_consent_and_open_relay).
+   */
+  openConsentSession(input: OpenConsentSessionInput): Promise<string>;
+
   /**
    * Llama a accept_consent_and_open_relay(p_consent_id, p_party).
    *
@@ -77,6 +94,33 @@ export interface ConsentRepo {
 /** Creates the consent/relay repository bound to a Supabase service client. */
 export function createConsentRepo(client: DbClient): ConsentRepo {
   return {
+    async openConsentSession(input: OpenConsentSessionInput): Promise<string> {
+      const ttlHours = input.ttlHours ?? 72;
+      const expiresAt = new Date(Date.now() + ttlHours * 3_600_000).toISOString();
+
+      const { data, error } = await client
+        .from("consent_sessions")
+        .insert({
+          match_id: input.matchId,
+          searcher_channel_id: input.searcherChannelId,
+          registrant_channel_id: input.registrantChannelId,
+          state: "pending_a",
+          searcher_accepted: false,
+          registrant_accepted: false,
+          expires_at: expiresAt,
+        })
+        .select("id")
+        .single<{ id: string }>();
+
+      if (error) {
+        throw new DbError(`openConsentSession falló: ${error.message}`, error.code);
+      }
+      if (!data) {
+        throw new DbError("openConsentSession: INSERT no devolvió fila.");
+      }
+      return data.id;
+    },
+
     async acceptConsent(
       consentId: string,
       party: ConsentParty,

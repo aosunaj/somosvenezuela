@@ -43,6 +43,12 @@ export type Effect =
       readonly query: string;
       readonly zona?: string;
       readonly descripcion?: string;
+      /**
+       * Si la persona buscada es menor de edad (R2-4a).
+       * El adaptador lo pasa a POST /searches; el backend lo confirma
+       * server-side de forma conservadora (judgment-r3 item 5).
+       */
+      readonly es_menor?: boolean;
     }
   | { readonly type: "search_pets"; readonly query: string; readonly zona?: string }
   | { readonly type: "delete_person"; readonly personId: string }
@@ -207,6 +213,11 @@ export interface SearchDraft {
   readonly edad?: number | null;
   readonly zona?: string | null;
   readonly descripcion?: string | null;
+  /**
+   * Si la persona buscada es menor de edad. Se recoge en el paso 'menor'
+   * mediante pregunta EXPLÍCITA (R2-4a). Nunca tiene default silencioso.
+   */
+  readonly es_menor?: boolean | null;
 }
 
 /**
@@ -257,6 +268,9 @@ export type ConversationState =
         | "edad"
         | "zona"
         | "descripcion"
+        // Paso EXPLÍCITO: ¿la persona buscada es menor? (R2-4a / guardrail #2).
+        // Nunca se omite ni tiene default silencioso.
+        | "menor"
         | "searching"
         | "choosing"
         | "requesting";

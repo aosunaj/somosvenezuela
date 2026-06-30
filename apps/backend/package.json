@@ -15,6 +15,7 @@
   "dependencies": {
     "@fastify/rate-limit": "^11.1.0",
     "ai": "workspace:*",
+    "argon2": "^0.44.0",
     "core": "workspace:*",
     "db": "workspace:*",
     "fastify": "^5.9.0",

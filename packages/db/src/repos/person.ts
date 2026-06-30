@@ -1,5 +1,6 @@
 import {
   assertEstadoFallecidoValido,
+  esMenor,
   DEFAULT_ESTADO,
   DEFAULT_FUENTE,
   DEFAULT_VERIFICACION,
@@ -74,6 +75,43 @@ export interface PersonRepo {
    * La confirmacion oficial por entidad verificada es un paso aparte fuera de alcance.
    */
   markFound(id: string): Promise<void>;
+  /**
+   * LECTURA INTERNA (routing). Determina si una persona es menor de edad.
+   * Lee la tabla base `persons` + join con `minors` (NUNCA persons_public).
+   * Conservative: null edad o fila en minors → true.
+   * Not-found persona → true (conservative gate).
+   * (design F2 / R2-4)
+   */
+  isMinorById(personId: string): Promise<boolean>;
+  /**
+   * LECTURA INTERNA (consent). Estado de verificación de identidad de una persona.
+   * Lee verification_question / verification_answer_hash de la tabla base.
+   * NUNCA de persons_public (esas columnas están excluidas de la vista pública).
+   * Returns null si la persona no existe.
+   */
+  getVerificationStatus(personId: string): Promise<VerificationStatus | null>;
+}
+
+/** Estado de verificación de identidad de una persona (para consent flow). */
+export interface VerificationStatus {
+  /** true si la persona tiene una pregunta de verificación configurada. */
+  hasQuestion: boolean;
+  /** Hash argon2id de la respuesta, o null si no hay pregunta. */
+  answerHash: string | null;
+}
+
+/** Fila mínima para leer el estado de menores (tabla base + join minors). */
+interface MinorCheckRow {
+  id: string;
+  edad: number | null;
+  minors_row: { id: string } | null;
+}
+
+/** Fila mínima para leer el estado de verificación. */
+interface VerificationRow {
+  id: string;
+  verification_question: string | null;
+  verification_answer_hash: string | null;
 }
 
 /** Construye el repositorio de personas sobre un cliente Supabase de servicio. */
@@ -207,6 +245,47 @@ export function createPersonRepo(client: DbClient): PersonRepo {
       if (data === null || (Array.isArray(data) && data.length === 0)) {
         throw new DbError("Persona no encontrada al marcar como encontrada.");
       }
+    },
+
+    async isMinorById(personId: string): Promise<boolean> {
+      // Lee la tabla BASE (nunca persons_public que excluye menores).
+      // Join con minors para detectar refuerzo autoritativo.
+      // Si no se encuentra la persona, retorna true (conservative gate).
+      const { data, error } = await client
+        .from("persons")
+        .select("id, edad, minors_row:minors(id)")
+        .eq("id", personId)
+        .maybeSingle<MinorCheckRow>();
+
+      if (error) {
+        throw new DbError(`isMinorById falló: ${error.message}`, error.code);
+      }
+      if (!data) return true; // persona no encontrada → conservative
+
+      return esMenor({
+        edad: data.edad,
+        tieneRefuerzoMinors: data.minors_row != null,
+      });
+    },
+
+    async getVerificationStatus(personId: string): Promise<VerificationStatus | null> {
+      // Lee tabla base: verification_question / verification_answer_hash.
+      // Estas columnas NUNCA están en persons_public (guardrail privacy).
+      const { data, error } = await client
+        .from("persons")
+        .select("id, verification_question, verification_answer_hash")
+        .eq("id", personId)
+        .maybeSingle<VerificationRow>();
+
+      if (error) {
+        throw new DbError(`getVerificationStatus falló: ${error.message}`, error.code);
+      }
+      if (!data) return null;
+
+      return {
+        hasQuestion: data.verification_question != null,
+        answerHash: data.verification_answer_hash,
+      };
     },
   };
 }

@@ -37,6 +37,10 @@ async function main(): Promise<void> {
     matchRepo: repos.matches,
     secureDeleteRepo: repos.secureDelete,
     personStateAuditRepo: repos.personStateAudit,
+    relayRepo: repos.relay,
+    auditRepo: repos.autoConnectionAudit,
+    consentRepo: repos.consent,
+    autoMatchThreshold: Number(process.env["AUTO_MATCH_THRESHOLD"] ?? "0.85"),
     // Secreto de servicio para operaciones privilegiadas (DELETE). Si no esta
     // definido, esas operaciones quedan deshabilitadas (responden 401).
     serviceToken: process.env["SERVICE_TOKEN"],
