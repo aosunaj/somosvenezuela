@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { OwnedPerson, PublicNeed, PublicZone } from "core";
 import {
   NotOwnerError,
+  type ActiveRelayInfo,
   type BackendClient,
   type ChannelIdentity,
   type PublicPersonResult,
@@ -28,6 +29,13 @@ import {
 //   POST   `${BACKEND_URL}/searches`                -> busca persona, vincula al buscador.
 //   GET    `${BACKEND_URL}/search/pets`             -> busca mascotas (vista publica).
 //   GET    `${BACKEND_URL}/zones`                   -> lista zonas publicas (mapa).
+//   Relay (F4):
+//   GET    `${BACKEND_URL}/relay/active`            -> consulta relay activo del canal.
+//   POST   `${BACKEND_URL}/relay/:id/forward`       -> reenviar mensaje por relay (cola).
+//   POST   `${BACKEND_URL}/relay/:id/close`         -> cerrar relay ambas partes.
+//   POST   `${BACKEND_URL}/consent/:id/respond`     -> responder consent session.
+//   POST   `${BACKEND_URL}/relay/:id/reveal`        -> solicitar revelacion bilateral.
+//   POST   `${BACKEND_URL}/consent/sweep`           -> expirar consent sessions vencidos.
 //   GET    `${BACKEND_URL}/needs`                   -> lista necesidades publicas (mapa).
 //
 // Tipamos/validamos las respuestas con los schemas de `core` para no confiar
@@ -272,6 +280,7 @@ export class HttpBackendClient implements BackendClient {
     zona?: string,
     channel?: ChannelIdentity,
     descripcion?: string,
+    es_menor?: boolean,
   ): Promise<readonly PublicPersonResult[]> {
     const body: Record<string, unknown> = {
       tipo: "persona",
@@ -294,6 +303,12 @@ export class HttpBackendClient implements BackendClient {
     // notificarle despues si aparece una coincidencia (Capa 2: reunir familias).
     if (channel !== undefined) {
       body["channel"] = channel;
+    }
+    // es_menor: respuesta EXPLICITA del usuario al paso 'menor' (R2-4a).
+    // Solo se envia cuando el usuario respondio; el backend confirma server-side
+    // de forma conservadora (judgment-r3 item 5).
+    if (es_menor !== undefined) {
+      body["es_menor"] = es_menor;
     }
 
     const res = await fetch(`${this.#baseUrl}/searches`, {
@@ -359,5 +374,118 @@ export class HttpBackendClient implements BackendClient {
     const json: unknown = await res.json();
     const parsed = needsResponseSchema.parse(json);
     return parsed.needs;
+  }
+
+  // ── Relay methods (F4, design v3) ─────────────────────────────────────────
+
+  /** Schema for GET /relay/active response. */
+  static readonly #activeRelaySchema = z
+    .object({
+      relayId: z.string(),
+      otherChannelId: z.string(),
+    })
+    .nullable();
+
+  async getActiveRelay(channel: ChannelIdentity): Promise<ActiveRelayInfo | null> {
+    try {
+      const res = await fetch(`${this.#baseUrl}/relay/active`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          plataforma: channel.plataforma,
+          chatId: channel.chatId,
+        }),
+      });
+      if (!res.ok) return null;
+      const json: unknown = await res.json();
+      return HttpBackendClient.#activeRelaySchema.parse(json);
+    } catch {
+      // Network error or parse failure: treat as no relay (safe default).
+      return null;
+    }
+  }
+
+  async forwardRelayMessage(
+    relayId: string,
+    text: string,
+    channel: ChannelIdentity,
+  ): Promise<void> {
+    const res = await fetch(
+      `${this.#baseUrl}/relay/${encodeURIComponent(relayId)}/forward`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          text,
+          channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`POST /relay/:id/forward fallo con estado ${res.status}`);
+    }
+  }
+
+  async closeRelay(relayId: string, channel: ChannelIdentity): Promise<void> {
+    const res = await fetch(
+      `${this.#baseUrl}/relay/${encodeURIComponent(relayId)}/close`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`POST /relay/:id/close fallo con estado ${res.status}`);
+    }
+  }
+
+  async respondConsent(
+    consentId: string,
+    decision: "aceptado" | "rechazado",
+    channel: ChannelIdentity,
+  ): Promise<void> {
+    const res = await fetch(
+      `${this.#baseUrl}/consent/${encodeURIComponent(consentId)}/respond`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          decision,
+          channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`POST /consent/:id/respond fallo con estado ${res.status}`);
+    }
+  }
+
+  async requestRelayReveal(relayId: string, channel: ChannelIdentity): Promise<void> {
+    const res = await fetch(
+      `${this.#baseUrl}/relay/${encodeURIComponent(relayId)}/reveal`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          channel: { plataforma: channel.plataforma, chatId: channel.chatId },
+        }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`POST /relay/:id/reveal fallo con estado ${res.status}`);
+    }
+  }
+
+  async sweepConsent(): Promise<void> {
+    const res = await fetch(`${this.#baseUrl}/consent/sweep`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+    if (!res.ok) {
+      throw new Error(`POST /consent/sweep fallo con estado ${res.status}`);
+    }
   }
 }
