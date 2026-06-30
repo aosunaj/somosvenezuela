@@ -49,6 +49,16 @@ export interface ConsentStateChangeInput {
   party: string;
 }
 
+/**
+ * Input para registrar un evento de revelado bilateral de contacto.
+ * NO incluye teléfonos ni PII: solo channel_id y relay_id para trazabilidad.
+ */
+export interface ContactRevealInput {
+  relayId: string;
+  partyAChannelId: string;
+  partyBChannelId: string;
+}
+
 export interface AuditRepo {
   /**
    * Escribe una fila de auditoría tipo 'route_decision'.
@@ -62,6 +72,13 @@ export interface AuditRepo {
    * Llamado por consent service al cambiar el estado de una consent_session.
    */
   writeConsentStateChange(input: ConsentStateChangeInput): Promise<void>;
+
+  /**
+   * Escribe una fila de auditoría tipo 'contact_reveal'.
+   * Llamado por el servicio de reveal cuando AMBAS partes aceptaron.
+   * NO incluye teléfonos ni PII: solo los channel_id y el relay_id.
+   */
+  writeContactReveal(input: ContactRevealInput): Promise<void>;
 }
 
 /** Construye el repositorio de auditoría sobre un cliente Supabase de servicio. */
@@ -95,6 +112,18 @@ export function createAuditRepo(client: DbClient): AuditRepo {
 
       if (error) {
         throw new DbError(`writeConsentStateChange falló: ${error.message}`, error.code);
+      }
+    },
+
+    async writeContactReveal(input: ContactRevealInput): Promise<void> {
+      // Registra el evento de reveal bilateral. Solo channel_id — sin teléfonos.
+      const { error } = await client.from("auto_connection_audit").insert({
+        event_type: AUDIT_EVENT_TYPE.CONTACT_REVEAL,
+        result: `relay=${input.relayId} a=${input.partyAChannelId} b=${input.partyBChannelId}`,
+      });
+
+      if (error) {
+        throw new DbError(`writeContactReveal falló: ${error.message}`, error.code);
       }
     },
   };

@@ -114,6 +114,15 @@ const RELAY_CLOSED_SELF =
 const RELAY_CLOSE_FAILED =
   "No pudimos cerrar la conversacion ahora mismo. Por favor, intentalo de nuevo.";
 
+// REVEAL BILATERAL: /compartir_contacto — solicita compartir el contacto con la otra parte.
+// El intercambio solo ocurre cuando AMBAS partes lo pidieron (guardrail #1).
+const RELAY_REVEAL_REQUESTED =
+  "Solicitud enviada. Compartiremos el contacto cuando la otra persona tambien lo acepte.";
+const RELAY_REVEAL_NO_RELAY =
+  "No tienes ninguna conexion activa ahora mismo. Si necesitas ayuda, escribe /ayuda.";
+const RELAY_REVEAL_FAILED =
+  "No pudimos procesar tu solicitud ahora mismo. Por favor, intentalo de nuevo en un momento.";
+
 /**
  * Procesa un update crudo de Telegram de principio a fin. No lanza ante updates
  * raros (los ignora) ni ante fallos del backend (responde un mensaje amable).
@@ -169,6 +178,11 @@ export async function handleUpdate(rawUpdate: unknown, deps: UpdateDeps): Promis
   // RESCATADO (Slice D): /reportar_rescatado <personId> — el BUSCADOR reporta encontrar alguien.
   // Manejado FUERA de la maquina (como reunionConsent): comando global sin estado de sesion.
   if (await handleReportarRescatado(chatId, content, deps)) return;
+
+  // REVEAL BILATERAL (PR7): /compartir_contacto — solicitar reveal de contacto en relay activo.
+  // Comando global fuera de la maquina: requiere relay activo. El intercambio solo ocurre
+  // cuando AMBAS partes lo pidieron (guardrail #1: el telefono nunca viaja hasta entonces).
+  if (await handleCompartirContacto(chatId, content, deps)) return;
 
   // Flujo unificado U-1: si la sesion esta en ese flujo, el handler lo maneja.
   if (
@@ -284,6 +298,47 @@ async function handleCancelarRelay(
     await deps.transport.sendMessage(chatId, RELAY_CLOSED_SELF);
   } catch {
     await deps.transport.sendMessage(chatId, RELAY_CLOSE_FAILED);
+  }
+  return true;
+}
+
+/**
+ * Atiende el comando /compartir_contacto: solicita el reveal bilateral del contacto
+ * en el relay activo de este canal. Retorna true si el comando fue atendido.
+ *
+ * Solo funciona si hay un relay activo. El intercambio de contacto solo ocurre cuando
+ * AMBAS partes lo piden (guardrail #1): aqui solo se registra la solicitud del canal
+ * que llama; el backend notifica al otro lado y entrega el teléfono si ambos acordaron.
+ */
+async function handleCompartirContacto(
+  chatId: number,
+  content: string,
+  deps: UpdateDeps,
+): Promise<boolean> {
+  const verb = parseCommandVerb(content);
+  if (verb !== "/compartir_contacto") return false;
+
+  const channel: ChannelIdentity = { plataforma: PLATAFORMA, chatId: String(chatId) };
+
+  // Verificar que hay un relay activo para este canal.
+  let relay;
+  try {
+    relay = await deps.backend.getActiveRelay(channel);
+  } catch {
+    relay = null;
+  }
+
+  if (relay === null) {
+    await deps.transport.sendMessage(chatId, RELAY_REVEAL_NO_RELAY);
+    return true;
+  }
+
+  // Solicitar el reveal bilateral al backend.
+  try {
+    await deps.backend.requestRelayReveal(relay.relayId, channel);
+    await deps.transport.sendMessage(chatId, RELAY_REVEAL_REQUESTED);
+  } catch {
+    await deps.transport.sendMessage(chatId, RELAY_REVEAL_FAILED);
   }
   return true;
 }

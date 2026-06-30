@@ -3,6 +3,7 @@ import type {
   ChannelLinkRepo,
   ChannelRepo,
   ConsentRepo,
+  ContactRepo,
   MatchRepo,
   NeedRepo,
   NotificationRepo,
@@ -77,6 +78,12 @@ export interface AppDeps {
    * SENSIBLE: solo backend.
    */
   consentRepo: ConsentRepo;
+  /**
+   * Contactos (SENSIBLE: teléfono/email). Solo se usa para el reveal bilateral
+   * de contacto (POST /relay/:id/reveal), cuando ambas partes han dado su
+   * consentimiento explícito. Nunca expuesto en rutas públicas.
+   */
+  contactRepo: ContactRepo;
   /**
    * Umbral de score para el auto-path (por defecto 0.85 del env).
    * Por debajo → gate humano. La IA sugiere, los humanos confirman (guardrail #4).
