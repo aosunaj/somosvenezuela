@@ -7,8 +7,9 @@ import type { NotificationRepo } from "db";
 // de Telegram ni de ninguna otra plataforma.
 //
 // Comportamiento:
-//   1. Obtiene las consent_sessions con state IN ('pending_a','pending_b') y
-//      expires_at < now() (via getExpiredPendingConsents).
+//   1. Obtiene las consent_sessions con state = 'pending' y
+//      expires_at < now() (via getExpiredPendingConsents). 'pending' es el unico
+//      estado no terminal (judgment-r3 item 8: no pending_a/pending_b).
 //   2. Para cada sesion expirada:
 //      a. Marca la sesion como 'expired' (markConsentExpired).
 //      b. Encola avisos de expiracion a ambas partes (searcher y registrant)
@@ -34,7 +35,7 @@ export interface SweepExpiredConsentsDeps {
    * En produccion, ejecuta:
    *   SELECT id, searcher_channel_id, registrant_channel_id
    *   FROM consent_sessions
-   *   WHERE state IN ('pending_a','pending_b') AND expires_at < now()
+   *   WHERE state = 'pending' AND expires_at < now()
    */
   getExpiredPendingConsents(): Promise<ExpiredConsentSession[]>;
   /**
