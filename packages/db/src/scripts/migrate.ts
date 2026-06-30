@@ -56,13 +56,17 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const sql = postgres(env.DATABASE_URL, { max: 1 });
+  const pgSql = postgres(env.DATABASE_URL, { max: 1 });
+  // Cast to MigrationSql: the postgres Sql client satisfies MigrationSql at
+  // runtime (unsafe + begin + end are all present). TypeScript cannot verify
+  // the begin() callback variance without an explicit assertion here.
+  const sql = pgSql as unknown as import("../migrate.js").MigrationSql;
   try {
     console.log(`[migrate] Iniciando: ${files.length} archivo(s) en ${MIGRATIONS_DIR}`);
     await runMigrations(sql, files);
     console.log(`[migrate] OK. Migraciones aplicadas (ver schema_migrations para detalle).`);
   } finally {
-    await sql.end({ timeout: 5 });
+    await pgSql.end({ timeout: 5 });
   }
 }
 
