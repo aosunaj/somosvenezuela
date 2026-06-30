@@ -6,6 +6,9 @@ import { scanRelayContent } from "../scanRelayContent.js";
 // guardrail #1: NEVER forward a phone number through a relay.
 // This function is shared between the relay intercept (PR4) and guardrails:scan (PR6).
 // Phone detection must be BLOCKING: return { ok: false } on any phone-like pattern.
+//
+// guardrails-allow: synthetic-phone-fixtures — synthetic example numbers (1234567,
+// 9999999) are required here to assert the detector catches phone patterns. No real PII.
 
 describe("scanRelayContent — clean text", () => {
   it("returns ok:true for plain text without phone patterns", () => {

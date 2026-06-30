@@ -17,6 +17,9 @@ import {
 //
 // guardrail #1: phone numbers are BLOCKING — never forwarded.
 // /cancelar in relay → closeRelay both sides + notify other party.
+//
+// guardrails-allow: synthetic-phone-fixtures — synthetic example numbers are required
+// here to assert the relay BLOCKS phone-like input. No real PII.
 
 const CHAT = 999;
 const RELAY_ID = "aaaabbbb-0000-4000-8000-111122223333";

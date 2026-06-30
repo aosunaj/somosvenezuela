@@ -14,6 +14,9 @@ import { describe, expect, it } from "vitest";
 //      (assertEstadoASalvoValido rule from core).
 //
 // Uses PHONE_REGEX from core/utils/scanRelayContent (shared regex, judgment-r3 item 12).
+//
+// guardrails-allow: synthetic-phone-fixtures — synthetic example numbers are required
+// here to assert PHONE_REGEX catches Venezuelan phone formats. No real PII.
 
 describe("guardrails:scan — phone detection (judgment-r3 item 12)", () => {
   it("PHONE_REGEX from scanRelayContent catches Venezuelan phone numbers", async () => {
