@@ -33,10 +33,12 @@ function makeFakeClient() {
       return {
         _table: table,
         select(_cols?: string) {
+          // getExpiredPendingConsents filtra por state = 'pending' (judgment-r3
+          // item 8): la cadena real es select().eq("state","pending").lt(...).
           return {
-            in(_col: string, _vals: string[]) {
+            eq(_col: string, _val: string) {
               return {
-                lt(_col: string, _val: string) {
+                lt(_col2: string, _val2: string) {
                   return Promise.resolve({
                     data: expiredSessions,
                     error: null,

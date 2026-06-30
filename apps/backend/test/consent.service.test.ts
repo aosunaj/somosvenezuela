@@ -139,6 +139,54 @@ describe("respondConsent — accept paths", () => {
   });
 });
 
+describe("respondConsent — auditoría usa el estado unificado 'pending' (judgment-r3 item 8)", () => {
+  // El CHECK de 0008 NO admite pending_a/pending_b. El audit previo escribía esos
+  // valores hardcodeados. Estos tests fijan el contrato: previousState siempre es
+  // 'pending' y NUNCA pending_a/pending_b.
+  function previousStatesWritten(audit: FakeAuditRepo): string[] {
+    const calls = audit.writeConsentStateChange.mock.calls as unknown[][];
+    return calls.map((c) => (c[0] as { previousState: string }).previousState);
+  }
+
+  it("decline: previousState='pending' (no pending_a)", async () => {
+    const deps = makeDeps("accepted_one");
+    await respondConsent(deps, makeInput({ action: "decline" }));
+
+    const prevs = previousStatesWritten(deps.auditRepo);
+    expect(prevs).toContain("pending");
+    expect(prevs).not.toContain("pending_a");
+    expect(prevs).not.toContain("pending_b");
+  });
+
+  it("accepted_one: previousState='pending' y newState='pending' (no pending_a/pending_b)", async () => {
+    const deps = makeDeps("accepted_one");
+    await respondConsent(deps, makeInput());
+
+    const calls = deps.auditRepo.writeConsentStateChange.mock.calls as unknown[][];
+    const args = calls.map((c) => c[0] as { previousState: string; newState: string });
+    expect(args).toContainEqual(
+      expect.objectContaining({ previousState: "pending", newState: "pending" }),
+    );
+    const allStates = args.flatMap((a) => [a.previousState, a.newState]);
+    expect(allStates).not.toContain("pending_a");
+    expect(allStates).not.toContain("pending_b");
+  });
+
+  it("both_accepted + relay: previousState='pending', newState='both_accepted'", async () => {
+    const deps = makeDeps("both_accepted", true);
+    await respondConsent(deps, makeInput());
+
+    const calls = deps.auditRepo.writeConsentStateChange.mock.calls as unknown[][];
+    const args = calls.map((c) => c[0] as { previousState: string; newState: string });
+    expect(args).toContainEqual(
+      expect.objectContaining({ previousState: "pending", newState: "both_accepted" }),
+    );
+    const allStates = args.flatMap((a) => [a.previousState, a.newState]);
+    expect(allStates).not.toContain("pending_a");
+    expect(allStates).not.toContain("pending_b");
+  });
+});
+
 describe("respondConsent — decline path", () => {
   it("action=decline: NO llama a acceptConsent (no tiene sentido aceptar un decline)", async () => {
     const deps = makeDeps("accepted_one");

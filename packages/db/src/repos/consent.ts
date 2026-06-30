@@ -14,6 +14,28 @@ import { DbError } from "../errors.js";
 
 // ── Tipos públicos ──────────────────────────────────────────────────────────
 
+/**
+ * Estados válidos de consent_sessions.state.
+ *
+ * ÚNICA fuente de verdad para el conjunto de estados permitido por el CHECK de la
+ * migración 0008 (`consent_sessions_state_check`). El estado inicial es 'pending'
+ * (NO pending_a/pending_b): la progresión del doble opt-in la modelan los booleans
+ * searcher_accepted / registrant_accepted (judgment-r3 item 8).
+ *
+ * Si esta lista deja de coincidir con el CHECK de 0008, los INSERT/UPDATE fallarían
+ * en producción; el test de contrato espeja este conjunto contra el SQL real.
+ */
+export const CONSENT_SESSION_STATES = {
+  PENDING: "pending",
+  BOTH_ACCEPTED: "both_accepted",
+  DECLINED: "declined",
+  EXPIRED: "expired",
+  FAILED_VERIFICATION: "failed_verification",
+} as const;
+
+export type ConsentSessionState =
+  (typeof CONSENT_SESSION_STATES)[keyof typeof CONSENT_SESSION_STATES];
+
 /** Resultado de la llamada a accept_consent_and_open_relay. */
 export type ConsentRpcResult = "both_accepted" | "accepted_one" | "no_op";
 
@@ -99,8 +121,9 @@ export interface ConsentRepo {
   anonymizeAuditContact(auditRowId: string): Promise<void>;
 
   /**
-   * Returns consent_sessions where state IN ('pending_a','pending_b') AND
-   * expires_at < now(). Used by sweepExpiredConsents (judgment-r3 item 11).
+   * Returns consent_sessions where state = 'pending' AND expires_at < now().
+   * Used by sweepExpiredConsents (judgment-r3 item 11). 'pending' is the only
+   * non-terminal state (judgment-r3 item 8: no pending_a/pending_b).
    *
    * Returns only the fields needed by the sweep: id, searcher_channel_id,
    * registrant_channel_id (both camelCase in the return type).
@@ -130,7 +153,9 @@ export function createConsentRepo(client: DbClient): ConsentRepo {
           match_id: input.matchId,
           searcher_channel_id: input.searcherChannelId,
           registrant_channel_id: input.registrantChannelId,
-          state: "pending_a",
+          // Estado inicial ÚNICO 'pending' (judgment-r3 item 8): el CHECK de 0008 NO
+          // admite pending_a/pending_b. La progresión la modelan los booleans.
+          state: CONSENT_SESSION_STATES.PENDING,
           searcher_accepted: false,
           registrant_accepted: false,
           expires_at: expiresAt,
@@ -206,15 +231,18 @@ export function createConsentRepo(client: DbClient): ConsentRepo {
     async getExpiredPendingConsents(): Promise<ExpiredConsentSession[]> {
       // SELECT id, searcher_channel_id, registrant_channel_id
       // FROM consent_sessions
-      // WHERE state IN ('pending_a','pending_b') AND expires_at < now()
+      // WHERE state = 'pending' AND expires_at < now()
       //
-      // NOTE: we pass now() as a string because supabase-js's .lt() takes a value
-      // comparable to the column type; ISO timestamp works for timestamptz.
+      // judgment-r3 item 8: 'pending' es el ÚNICO estado no terminal; pending_a/
+      // pending_b no existen en el CHECK de 0008, así que filtramos por 'pending'.
+      //
+      // NOTE: we pass now() as a string because supabase-js's .eq()/.lt() take a
+      // value comparable to the column type; ISO timestamp works for timestamptz.
       const now = new Date().toISOString();
       const { data, error } = await (client
         .from("consent_sessions")
         .select("id, searcher_channel_id, registrant_channel_id")
-        .in("state", ["pending_a", "pending_b"])
+        .eq("state", CONSENT_SESSION_STATES.PENDING)
         .lt("expires_at", now) as unknown as Promise<{
         data: Array<{
           id: string;
@@ -239,7 +267,7 @@ export function createConsentRepo(client: DbClient): ConsentRepo {
       // UPDATE consent_sessions SET state='expired' WHERE id=consentId
       const { error } = await (client
         .from("consent_sessions")
-        .update({ state: "expired" })
+        .update({ state: CONSENT_SESSION_STATES.EXPIRED })
         .eq("id", consentId) as unknown as Promise<{
         data: null;
         error: { message: string; code?: string } | null;

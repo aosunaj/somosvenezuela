@@ -64,10 +64,11 @@ export async function respondConsent(
       },
     });
 
-    // Audit best-effort
+    // Audit best-effort. Estado previo unificado 'pending' (judgment-r3 item 8:
+    // no pending_a/pending_b; el doble opt-in lo modelan los booleans).
     await deps.auditRepo.writeConsentStateChange({
       consentId,
-      previousState: "pending_a",
+      previousState: "pending",
       newState: "declined",
       party,
     }).catch(() => undefined);
@@ -85,11 +86,12 @@ export async function respondConsent(
 
   if (rpcResult === "accepted_one") {
     // Solo una parte ha aceptado; el otro aún no. No hay relay. Sin notificación de relay.
-    // Audit best-effort
+    // Audit best-effort. El estado de la fila NO cambia: sigue 'pending'; solo se
+    // marcó el boolean de esta parte (judgment-r3 item 8: no pending_a/pending_b).
     await deps.auditRepo.writeConsentStateChange({
       consentId,
-      previousState: "pending_a",
-      newState: "pending_b",
+      previousState: "pending",
+      newState: "pending",
       party,
     }).catch(() => undefined);
     return;
@@ -129,10 +131,10 @@ export async function respondConsent(
     }),
   ]);
 
-  // Audit best-effort
+  // Audit best-effort. Estado previo unificado 'pending' (judgment-r3 item 8).
   await deps.auditRepo.writeConsentStateChange({
     consentId,
-    previousState: "pending_b",
+    previousState: "pending",
     newState: "both_accepted",
     party,
   }).catch(() => undefined);
