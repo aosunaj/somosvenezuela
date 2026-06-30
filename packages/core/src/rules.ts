@@ -105,3 +105,68 @@ export function toPublicPet(pet: PetConContacto): PublicPet {
   void _contact_id;
   return publica;
 }
+
+// ── Guardrail: menores (R2-4 / F2) ──────────────────────────────────────────
+
+/**
+ * Entrada para determinar si una persona es menor de edad.
+ * Combina la edad declarada y el refuerzo de la tabla `minors` (authoritative).
+ */
+export interface EsMenorInput {
+  /**
+   * Edad en años. `null` cuando no se conoce.
+   * Una edad desconocida se trata conservadoramente como menor.
+   */
+  readonly edad: number | null;
+  /**
+   * `true` si la persona tiene una fila en la tabla `minors`
+   * (entidad_verificadora/entrega_confirmada). La tabla `minors` es la fuente
+   * AUTORITATIVA: sobrescribe cualquier dato de edad.
+   */
+  readonly tieneRefuerzoMinors: boolean;
+}
+
+/**
+ * Regla de dominio PURA para determinar si una persona es menor de edad.
+ *
+ * Prioridad de evaluación (R2-4 / F2):
+ * 1. `tieneRefuerzoMinors = true` → siempre menor (la tabla `minors` gana).
+ * 2. `edad === null` → conservador: menor (edad desconocida no puede afirmar adultez).
+ * 3. `edad < 18` → menor.
+ * 4. `edad >= 18` sin refuerzo → adulto.
+ *
+ * `persons_public` usa `coalesce(edad, 999) >= 18` para la VISTA PÚBLICA
+ * (correcto para ocultar menores del público), pero NUNCA se usa en el routing
+ * de reencuentro: aquí se usa esta regla conservadora.
+ */
+export function esMenor(input: EsMenorInput): boolean {
+  if (input.tieneRefuerzoMinors) return true;
+  if (input.edad === null) return true;
+  return input.edad < 18;
+}
+
+// ── Guardrail: a_salvo ────────────────────────────────────────────────────────
+
+/**
+ * Valida el guardrail de 'a_salvo': `estado='a_salvo'` SOLO si
+ * `verificacion='verificada'` (fuente fiable confirmada por humano).
+ * Espeja `esEstadoFallecidoValido`.
+ * NUNCA automático: el rescatado flow SOLO pone en cola; un humano confirma.
+ */
+export function esEstadoASalvoValido(input: EstadoVerificacionInput): boolean {
+  if (input.estado !== "a_salvo") return true;
+  return input.verificacion === "verificada";
+}
+
+/**
+ * Valida el guardrail de 'a_salvo' y lanza si se viola.
+ * Usar antes de persistir cualquier cambio de estado a 'a_salvo'.
+ */
+export function assertEstadoASalvoValido(input: EstadoVerificacionInput): void {
+  if (!esEstadoASalvoValido(input)) {
+    throw new GuardrailError(
+      "No se puede marcar 'a_salvo' sin verificacion 'verificada' (confirmacion humana requerida).",
+      "a_salvo_requiere_verificacion",
+    );
+  }
+}
