@@ -3,7 +3,19 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import type { AppDeps } from "../deps.js";
 import { respondConsent } from "../services/consent.js";
+import { sweepExpiredConsents } from "../services/sweep.js";
 import { apiError } from "../errors.js";
+import { timingSafeEqualString } from "../security.js";
+
+/**
+ * Valida el token de servicio en tiempo constante (M3, guardrail #6): evita filtrar
+ * el secreto por timing. Usa el mismo helper compartido que el resto de rutas
+ * privilegiadas (persons/matches/notifications). false si no hay secreto configurado.
+ */
+function isAuthorized(provided: string, expected: string | undefined): boolean {
+  if (expected === undefined || expected.length === 0) return false;
+  return timingSafeEqualString(provided, expected);
+}
 
 // Rutas de consentimiento bilateral (Model B — Nuevo diseño con consent_sessions).
 //
@@ -70,22 +82,21 @@ export function registerConsentRoutes(app: FastifyInstance, deps: AppDeps): void
       response: { 200: sweepResponseSchema, 401: errorResponseSchema },
     },
     handler: async (request, reply) => {
-      if (request.body.serviceToken !== deps.serviceToken) {
+      // M3: comparacion en tiempo constante del token de servicio.
+      if (!isAuthorized(request.body.serviceToken, deps.serviceToken)) {
         return reply.code(401).send(apiError("unauthorized", "Token de servicio invalido."));
       }
 
-      // Sweep: marcar como 'expired' las sesiones que pasaron su expires_at.
-      // best-effort — no lanza si la BD falla
-      let swept = 0;
-      try {
-        // TODO: encapsular en consentRepo.sweepExpired() en una iteración futura.
-        // Por ahora se ejecuta directamente para no bloquear el lanzamiento.
-        swept = 0;
-      } catch {
-        // best-effort
-      }
+      // Sweep REAL (B4): invoca el mismo servicio que corre en el setInterval de
+      // index.ts. Marca como 'expired' las sesiones vencidas y notifica a ambas
+      // partes. Best-effort por sesion; devuelve el conteo real de barridas.
+      const result = await sweepExpiredConsents({
+        notificationRepo: deps.notificationRepo,
+        getExpiredPendingConsents: () => deps.consentRepo.getExpiredPendingConsents(),
+        markConsentExpired: (id) => deps.consentRepo.markConsentExpired(id),
+      });
 
-      return reply.code(200).send({ swept });
+      return reply.code(200).send({ swept: result.swept });
     },
   });
 }

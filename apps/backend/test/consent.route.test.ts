@@ -43,11 +43,19 @@ function makeDeps(): AppDeps {
       openConsentSession: vi.fn(),
       closeRelaysAndDeleteContact: vi.fn(),
       anonymizeAuditContact: vi.fn(),
+      getExpiredPendingConsents: vi.fn().mockResolvedValue([]),
+      markConsentExpired: vi.fn().mockResolvedValue(undefined),
     } as unknown as AppDeps["consentRepo"],
     autoMatchThreshold: 0.85,
     serviceToken: "test-token",
   };
 }
+
+const EXPIRED_SESSION = {
+  id: "c5000099-0000-4000-8000-000000000099",
+  searcherChannelId: SEARCHER_CHAN,
+  registrantChannelId: REGISTRANT_CHAN,
+};
 
 describe("POST /consent/:id/respond", () => {
   it("400 si falta party", async () => {
@@ -108,5 +116,69 @@ describe("POST /consent/:id/respond", () => {
       },
     });
     expect(res.statusCode).toBe(200);
+  });
+});
+
+describe("POST /consent/sweep — invoca el servicio real (B4) y M3", () => {
+  it("401 si el serviceToken es invalido", async () => {
+    const deps = makeDeps();
+    const app = await buildApp(deps);
+    const res = await app.inject({
+      method: "POST",
+      url: "/consent/sweep",
+      payload: { serviceToken: "token-incorrecto" },
+    });
+    expect(res.statusCode).toBe(401);
+    // No debe siquiera consultar la BD si el token es invalido.
+    expect(
+      (deps.consentRepo as { getExpiredPendingConsents: ReturnType<typeof vi.fn> })
+        .getExpiredPendingConsents,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("invoca sweepExpiredConsents (getExpiredPendingConsents) y devuelve el conteo real", async () => {
+    const deps = makeDeps();
+    // Una sesion expirada → swept debe ser 1 (no el stub hardcodeado 0).
+    (deps.consentRepo as { getExpiredPendingConsents: ReturnType<typeof vi.fn> })
+      .getExpiredPendingConsents.mockResolvedValue([EXPIRED_SESSION]);
+    const app = await buildApp(deps);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/consent/sweep",
+      payload: { serviceToken: "test-token" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { swept: number };
+    expect(body.swept).toBe(1);
+
+    // El handler DEBE haber llamado al servicio real (no el stub no-op):
+    expect(
+      (deps.consentRepo as { getExpiredPendingConsents: ReturnType<typeof vi.fn> })
+        .getExpiredPendingConsents,
+    ).toHaveBeenCalledOnce();
+    expect(
+      (deps.consentRepo as { markConsentExpired: ReturnType<typeof vi.fn> })
+        .markConsentExpired,
+    ).toHaveBeenCalledWith(EXPIRED_SESSION.id);
+  });
+
+  it("sin sesiones expiradas → swept=0 (idempotente)", async () => {
+    const deps = makeDeps();
+    const app = await buildApp(deps);
+    const res = await app.inject({
+      method: "POST",
+      url: "/consent/sweep",
+      payload: { serviceToken: "test-token" },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { swept: number };
+    expect(body.swept).toBe(0);
+    // Aun asi, debe haber CONSULTADO (no es un stub que devuelve 0 sin mirar).
+    expect(
+      (deps.consentRepo as { getExpiredPendingConsents: ReturnType<typeof vi.fn> })
+        .getExpiredPendingConsents,
+    ).toHaveBeenCalledOnce();
   });
 });
