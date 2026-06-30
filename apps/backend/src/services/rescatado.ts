@@ -38,8 +38,12 @@ export interface RescatadoResult {
 export interface RescatadoInput {
   /** ID de la persona registrada (el que fue encontrado). */
   readonly personId: string;
-  /** ID de la busqueda activa. */
-  readonly searchId: string;
+  /**
+   * ID de la busqueda activa (referencia de reunion para openConsentSession).
+   * Opcional: el reporte desde el bot no porta searchId. Sin searchId el flujo
+   * normal (queued) no puede abrir consent_session → operator_queue.
+   */
+  readonly searchId?: string;
   /**
    * Canal interno del registrante (quien tiene el registro de la persona).
    * Puede ser undefined si el registrante no es localizable.
@@ -54,10 +58,11 @@ export interface RescatadoInput {
    * contact_id real del buscador, no el searcherChannelId (un channel UUID no es
    * un contact_id — usar el canal como proxy era un bug de seguridad silencioso).
    *
-   * Si es undefined (contact desconocido o no disponible), el servicio es conservador
-   * y omite el chequeo de buscador: la logica sigue con los otros guards. El
-   * chequeo conservador (design R2-4(c) paso 2: null buscador_contact_id → minor)
-   * es responsabilidad del caller antes de invocar este servicio.
+   * FIX (A1, judgment-r3): si es undefined, el servicio NO omite el chequeo: aplica
+   * el branch conservador (design R2-4(c) paso 2: buscador_contact_id no resuelto a
+   * adulto positivo → human_review). El caller (la ruta) debe intentar resolver el
+   * contact_id real del buscador desde su canal; si no lo logra, el servicio gatea
+   * a human_review en vez de dejar pasar a queued.
    */
   readonly searcherContactId?: string;
   /**
@@ -97,31 +102,40 @@ export async function reportRescatado(
   deps: RescatadoDeps,
   input: RescatadoInput,
 ): Promise<RescatadoResult> {
-  // ── Guard: registrantEstado fallecida ──────────────────────────────────────
-  if (input.registrantEstado === "fallecida") {
-    return { outcome: "human_review" };
-  }
-
   // ── Guard: menores (bidireccional) ─────────────────────────────────────────
+  // ORDEN (M1, judgment-r3): el gate de menores va ANTES que el de fallecida, para
+  // ser consistente con route-match.ts (minor antes que fallecida). Mismo outcome
+  // humano, pero la razon prioritaria correcta es la proteccion de menores.
+
   // isMinorById del registrante
   const registrantIsMinor = await deps.personRepo.isMinorById(input.personId);
   if (registrantIsMinor) {
     return { outcome: "human_review" };
   }
 
-  // isMinorByContactId del buscador (conservative: no PII, solo flags).
+  // Gate de menores del lado BUSCADOR (conservative: no PII, solo flags).
   //
   // FIX (PR 6, judgment-r3): usa searcherContactId real, NO searcherChannelId.
-  // Un channel UUID no es un contact_id: usar el canal como proxy era incorrecto
-  // y podria pasar adultos como menores (o viceversa) en el chequeo conservador.
+  // Un channel UUID no es un contact_id: usar el canal como proxy era incorrecto.
   //
-  // Si no se provee searcherContactId: omitimos el chequeo del buscador (el caller
-  // es responsable de aplicar el branch conservador R2-4(c) paso 2 antes de llamar).
-  if (input.searcherContactId !== undefined) {
-    const searcherIsMinor = await deps.searchRepo.isMinorByContactId(input.searcherContactId);
-    if (searcherIsMinor) {
-      return { outcome: "human_review" };
-    }
+  // FIX (A1, judgment-r3 item / route-match R2-4(c) paso 2): si NO se puede
+  // resolver el lado buscador a un ADULTO positivo, el resultado es human_review
+  // (NO se sigue a queued). Es decir:
+  //   - searcherContactId ausente              → human_review (conservador)
+  //   - searcherContactId presente pero menor  → human_review
+  // Solo un adulto positivo resuelto continua. Antes, con searcherContactId
+  // ausente el chequeo se OMITIA y seguia a queued: un agujero en el guardrail.
+  if (input.searcherContactId === undefined) {
+    return { outcome: "human_review" };
+  }
+  const searcherIsMinor = await deps.searchRepo.isMinorByContactId(input.searcherContactId);
+  if (searcherIsMinor) {
+    return { outcome: "human_review" };
+  }
+
+  // ── Guard: registrantEstado fallecida ──────────────────────────────────────
+  if (input.registrantEstado === "fallecida") {
+    return { outcome: "human_review" };
   }
 
   // ── Guard: registrante no localizable ──────────────────────────────────────
@@ -132,6 +146,14 @@ export async function reportRescatado(
   // ── Guard: consent_session existente (race condition) ─────────────────────
   if (input.existingConsentId) {
     return { outcome: "consent_pending" };
+  }
+
+  // ── Guard: sin searchId no hay referencia de reunion para abrir consent ─────
+  // El flujo normal usa searchId como matchId de la consent_session. Si el caller
+  // (p. ej. el bot) no lo aporta, no se puede abrir consent de forma segura → un
+  // operador debe gestionarlo.
+  if (!input.searchId) {
+    return { outcome: "operator_queue" };
   }
 
   // ── Flujo normal: abrir consent_session y notificar al registrante ─────────

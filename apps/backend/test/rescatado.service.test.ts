@@ -83,6 +83,9 @@ function makeInput(overrides: Partial<RescatadoInput> = {}): RescatadoInput {
     searchId: SYNTH_SEARCH_ID,
     registrantChannelId: SYNTH_REGISTRANT_CHANNEL,
     searcherChannelId: SYNTH_SEARCHER_CHANNEL,
+    // Por defecto el buscador resuelve a un contacto ADULTO positivo. El gate A1
+    // (sin contact_id → human_review) se prueba explicitamente abajo con undefined.
+    searcherContactId: SYNTH_SEARCHER_CONTACT_ID,
     ...overrides,
   };
 }
@@ -286,19 +289,75 @@ describe("reportRescatado — gate menor con buscador_contact_id real", () => {
     expect(calledWith).not.toContain(SYNTH_SEARCHER_CHANNEL);
   });
 
-  it("[TDD-RED] sin searcherContactId → comportamiento conservador (conservative=minor)", async () => {
-    // When no contact_id available, conservatively route to human gate
-    // (design R2-4(c): unknown buscador_contact_id -> minor branch)
+  it("sin searcherContactId → human_review (gate A1 conservador, NO queued)", async () => {
+    // Precondicion explicita: el lado buscador NO se resuelve a un adulto positivo
+    // (searcherContactId ausente). Antes esto OMITIA el chequeo y seguia a queued
+    // (agujero en el guardrail de menores). Ahora gatea conservadoramente a humano.
     const deps = makeBaseDeps();
-    // Pass no searcherContactId: the service must detect unknown and go conservative
     const input = makeInput({ searcherContactId: undefined });
-    // Conservative: treat unknown as possible minor → human_review
-    // (The current implementation wrongly passes channelId which may not be a contact_id)
     const result = await reportRescatado(deps, input);
-    // When no contact_id is provided, behavior is up to implementation:
-    // conservative = still queued if isMinorByContactId returns false for undefined
-    // This test documents the expected contract post-fix.
-    expect(["queued", "human_review"]).toContain(result.outcome);
+    expect(result.outcome).toBe("human_review");
+  });
+
+  it("sin searcherContactId → NUNCA llega a abrir consent_session (no queued)", async () => {
+    // El gate dispara antes de openConsentSession: confirma que no se encola.
+    let openConsentCalled = 0;
+    const deps = makeBaseDeps({
+      consentRepo: {
+        async openConsentSession(_input) {
+          openConsentCalled++;
+          return SYNTH_CONSENT_ID;
+        },
+        async acceptConsent(_id, _party) {
+          return "accepted_one";
+        },
+        async closeRelaysAndDeleteContact(_id) {
+          return [];
+        },
+        async anonymizeAuditContact(_id) {},
+      },
+    });
+    const result = await reportRescatado(deps, makeInput({ searcherContactId: undefined }));
+    expect(result.outcome).toBe("human_review");
+    expect(openConsentCalled).toBe(0);
+  });
+
+  it("con searcherContactId de un ADULTO positivo → sigue al flujo normal (queued)", async () => {
+    // Precondicion explicita: el buscador resuelve a un adulto (isMinorByContactId=false).
+    const deps = makeBaseDeps({
+      searchRepo: {
+        async isMinorByContactId(_id) {
+          return false;
+        },
+      },
+    });
+    const result = await reportRescatado(
+      deps,
+      makeInput({ searcherContactId: SYNTH_SEARCHER_CONTACT_ID }),
+    );
+    expect(result.outcome).toBe("queued");
+  });
+});
+
+describe("reportRescatado — orden de guards (M1): menor antes que fallecida", () => {
+  it("registrante menor Y fallecida → human_review por MENOR (gate de menor primero)", async () => {
+    // Ambos guards llevan a human_review, pero el de menor debe evaluarse primero.
+    // Verificamos que isMinorById se consulta (no se corta antes por fallecida).
+    let minorChecked = false;
+    const deps = makeBaseDeps({
+      personRepo: {
+        async isMinorById(_id) {
+          minorChecked = true;
+          return true;
+        },
+      },
+    });
+    const result = await reportRescatado(
+      deps,
+      makeInput({ registrantEstado: "fallecida" }),
+    );
+    expect(result.outcome).toBe("human_review");
+    expect(minorChecked).toBe(true);
   });
 });
 
