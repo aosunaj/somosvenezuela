@@ -8,6 +8,7 @@ import {
   type Reply,
   type StepResult,
 } from "core";
+import { scanRelayContent } from "core/utils/scanRelayContent";
 import { telegramUpdateSchema } from "./telegram-types.js";
 import type {
   BackendClient,
@@ -16,6 +17,8 @@ import type {
   SessionStore,
   TelegramTransport,
 } from "./ports.js";
+import { handleMenuCallbackQuery } from "./handlers/menu.js";
+import { handleUnifiedEntryUpdate } from "./handlers/unified-entry.js";
 
 /** Plataforma fija de este adaptador (el backend la usa para el vinculo del canal). */
 const PLATAFORMA = "telegram" as const;
@@ -28,6 +31,13 @@ const PLATAFORMA = "telegram" as const;
 //   3. Si la maquina pide un `effect`, ejecutarlo contra el backend y re-inyectar
 //      el resultado como `effect_result`, enviando luego la respuesta final.
 //   4. Persistir el ConversationState entre mensajes del mismo chat.
+//
+// RELAY INTERCEPT (F4, design v3) — ANTES de la maquina, solo para kind:'text':
+//   Si hay relay activo, escanear con scanRelayContent (guardrail #1: bloqueo de
+//   telefonos) y, si pasa, reenviar por la cola del backend (NUNCA Telegram API).
+//   Si el scan detecta un numero: bloquear y avisar al emisor.
+//   Comandos van SIEMPRE a la maquina (F4 bypass). /cancelar con relay activo:
+//   cierra el relay y notifica a ambas partes antes de pasar a la maquina.
 //
 // Toda la logica de dialogo (que pedir, como validar, cuando confirmar) vive en
 // la maquina; aqui solo hay transporte, formato y ejecucion de efectos.
@@ -81,11 +91,43 @@ const REUNION_NOTHING_PENDING =
 const REUNION_CONSENT_FAILED =
   "No pudimos registrar tu respuesta ahora mismo. Por favor, intentalo de nuevo en un momento.";
 
+// Mensajes del relay (espanol neutral, guardrail #1: sin datos de la otra parte).
+const RELAY_FORWARDED = "Mensaje enviado.";
+const RELAY_CLOSED_SELF =
+  "Conversacion cerrada. Si quieres conectar de nuevo, inicia una nueva busqueda.";
+const RELAY_CLOSE_FAILED =
+  "No pudimos cerrar la conversacion ahora mismo. Por favor, intentalo de nuevo.";
+
 /**
  * Procesa un update crudo de Telegram de principio a fin. No lanza ante updates
  * raros (los ignora) ni ante fallos del backend (responde un mensaje amable).
  */
 export async function handleUpdate(rawUpdate: unknown, deps: UpdateDeps): Promise<void> {
+  // 0) Menu inline (callback_query): intercept ANTES de parsear mensaje.
+  //    handleMenuCallbackQuery retorna true si lo manejo; false si no aplica.
+  //
+  // MenuCallbackDeps.sessions uses a wider PersistableState union that includes
+  // UnifiedEntryState in addition to ConversationState. We bridge via an adapter
+  // that satisfies the wider type. The cast in get() is safe: ConversationState
+  // is always a valid PersistableState. The set() cast is also safe because the
+  // menu handler only ever writes back a state that originated from the machine.
+  if (
+    await handleMenuCallbackQuery(rawUpdate, {
+      transport: deps.transport,
+      sessions: {
+        get: (chatId: number) => deps.sessions.get(chatId) as ReturnType<
+          Parameters<typeof handleMenuCallbackQuery>[1]["sessions"]["get"]
+        >,
+        set: (chatId: number, state: ReturnType<
+          Parameters<typeof handleMenuCallbackQuery>[1]["sessions"]["get"]
+        >) => {
+          deps.sessions.set(chatId, state as Parameters<typeof deps.sessions.set>[1]);
+        },
+      },
+    })
+  )
+    return;
+
   // 1) Sanear: lo que no sea un mensaje de un chat se ignora con seguridad.
   const parsed = telegramUpdateSchema.safeParse(rawUpdate);
   if (!parsed.success) return;
@@ -108,9 +150,132 @@ export async function handleUpdate(rawUpdate: unknown, deps: UpdateDeps): Promis
   // (comandos globales, sin estado de sesion). Si lo manejamos aqui, terminamos.
   if (await handleReunionConsent(chatId, content, deps)) return;
 
+  // Flujo unificado U-1: si la sesion esta en ese flujo, el handler lo maneja.
+  if (
+    await handleUnifiedEntryUpdate(rawUpdate, {
+      transport: deps.transport,
+      sessions: deps.sessions as {
+        get(chatId: number): unknown;
+        set(chatId: number, state: unknown): void;
+      },
+      backend: {
+        searchPersonsUnified: async (query: string) => {
+          try {
+            return await deps.backend.searchPersons(query);
+          } catch {
+            return [];
+          }
+        },
+        searchPetsUnified: async (query: string) => {
+          try {
+            return await deps.backend.searchPets(query);
+          } catch {
+            return [];
+          }
+        },
+        subscribeToCase: async (_caseId: string, _domain: string) => ({ ok: true }),
+      },
+    })
+  )
+    return;
+
   const input = toInput(content);
+  const channel: ChannelIdentity = { plataforma: PLATAFORMA, chatId: String(chatId) };
+
+  // F4 RELAY INTERCEPT — solo para kind:'text'; comandos van siempre a la maquina.
+  if (input.kind === "text") {
+    if (await handleRelayIntercept(chatId, channel, input.text, deps)) return;
+  } else {
+    // Comando /cancelar: verificar si hay relay activo para cerrarlo antes de maquina.
+    const verb = parseCommandVerb(content);
+    if (verb === "/cancelar") {
+      if (await handleCancelarRelay(chatId, channel, deps)) return;
+    }
+  }
+
   await runConversation(chatId, input, deps);
 }
+
+// ── Relay intercept (F4, design v3) ─────────────────────────────────────────
+
+/**
+ * Maneja un mensaje de texto cuando hay un relay activo.
+ * Retorna true si el mensaje fue procesado por el relay (reenvio o bloqueo).
+ * Retorna false si no hay relay activo (el flujo normal de la maquina continua).
+ *
+ * guardrail #1: el scan de telefono es BLOQUEANTE. Si se detecta un numero:
+ *   - NO se reenvía nada.
+ *   - Se avisa al emisor con el mensaje de seguridad del scanRelayContent.
+ */
+async function handleRelayIntercept(
+  chatId: number,
+  channel: ChannelIdentity,
+  text: string,
+  deps: UpdateDeps,
+): Promise<boolean> {
+  let relay;
+  try {
+    relay = await deps.backend.getActiveRelay(channel);
+  } catch {
+    relay = null;
+  }
+  if (relay === null) return false;
+
+  // Scan BLOQUEANTE de contenido (judgment-r3 item 12).
+  const scan = scanRelayContent(text);
+  if (!scan.ok) {
+    await deps.transport.sendMessage(chatId, scan.reason);
+    return true;
+  }
+
+  // Reenviar el mensaje por la cola del backend (NUNCA Telegram API directa).
+  try {
+    await deps.backend.forwardRelayMessage(relay.relayId, text, channel);
+    await deps.transport.sendMessage(chatId, RELAY_FORWARDED);
+  } catch {
+    await deps.transport.sendMessage(
+      chatId,
+      "No pudimos enviar el mensaje ahora mismo. Por favor, intentalo de nuevo.",
+    );
+  }
+  return true;
+}
+
+/**
+ * Maneja /cancelar cuando hay un relay activo para este canal.
+ * Retorna true si el relay fue cerrado (y el comando fue manejado por el relay).
+ * Retorna false si no hay relay activo (la maquina debe manejar /cancelar normalmente).
+ */
+async function handleCancelarRelay(
+  chatId: number,
+  channel: ChannelIdentity,
+  deps: UpdateDeps,
+): Promise<boolean> {
+  let relay;
+  try {
+    relay = await deps.backend.getActiveRelay(channel);
+  } catch {
+    relay = null;
+  }
+  if (relay === null) return false;
+
+  try {
+    await deps.backend.closeRelay(relay.relayId, channel);
+    await deps.transport.sendMessage(chatId, RELAY_CLOSED_SELF);
+  } catch {
+    await deps.transport.sendMessage(chatId, RELAY_CLOSE_FAILED);
+  }
+  return true;
+}
+
+/** Extrae el verbo de un comando del texto (ej. '/cancelar @bot args' -> '/cancelar'). */
+function parseCommandVerb(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) return "";
+  return trimmed.split(/\s+/)[0]?.split("@")[0]?.toLowerCase() ?? "";
+}
+
+// ── Reunion consent (commands /conectar | /rechazar) ─────────────────────────
 
 /**
  * Atiende los comandos GLOBALES de reencuentro del registrante (/conectar | /rechazar).
@@ -272,11 +437,13 @@ async function executeEffect(
       try {
         // Pasamos el canal para vincular al buscador (lo notificaremos si hay match).
         // `zona` y `descripcion` son los campos estructurados que el matcher pondera.
+        // `es_menor` es la respuesta EXPLICITA del usuario al paso 'menor' (R2-4a).
         const results = await backend.searchPersons(
           effect.query,
           effect.zona,
           channel,
           effect.descripcion,
+          effect.es_menor,
         );
         return { type: "search_persons", results };
       } catch {
