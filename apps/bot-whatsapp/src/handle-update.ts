@@ -285,6 +285,17 @@ async function executeEffect(
         return null;
       }
     }
+    case "list_my_persons": {
+      try {
+        // El dueno lista SUS registros para marcar/borrar (autoriza por canal). La
+        // respuesta es la vista del dueno (sin contacto). El fallo lo gestiona el
+        // adaptador (null -> mensaje generico, igual que las demas lecturas).
+        const persons = await backend.listMyPersons(channel);
+        return { type: "list_my_persons", persons };
+      } catch {
+        return null;
+      }
+    }
     case "list_zones": {
       try {
         // Lectura publica del mapa (sin contacto). El fallo lo gestiona el adaptador.

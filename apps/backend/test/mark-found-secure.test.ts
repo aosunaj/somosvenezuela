@@ -79,6 +79,9 @@ function makeFakePersonRepo(calls: Calls): PersonRepo {
     async markFound(id) {
       calls.markedFound.push(id);
     },
+    async listByContact() {
+      return [];
+    },
   };
 }
 

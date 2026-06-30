@@ -76,6 +76,9 @@ function makeFakePersonRepo(): PersonRepo {
     async markFound() {
       /* no-op: autorizado */
     },
+    async listByContact() {
+      return [];
+    },
   };
 }
 

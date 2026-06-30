@@ -6,6 +6,7 @@ import {
   type ConversationInput,
   type ConversationState,
   type Effect,
+  type OwnedPerson,
   type PublicNeed,
   type PublicPerson,
   type PublicPet,
@@ -81,6 +82,24 @@ function synthPublicPerson(
     ...overrides,
   };
 }
+
+/** Registro propio del dueno (vista para marcar/borrar por lista, sin contacto). */
+function synthOwnedPerson(overrides: Partial<OwnedPerson> = {}): OwnedPerson {
+  return {
+    id: SYNTH_PERSON_ID,
+    nombre: "Persona Sintetica",
+    apellidos: "De Prueba",
+    zona: "Zona Ficticia",
+    estado: "desaparecida",
+    ...overrides,
+  };
+}
+
+/** Re-inyecta la lista de MIS registros (resultado del efecto list_my_persons). */
+const listMine = (persons: readonly OwnedPerson[]): ConversationInput => ({
+  kind: "effect_result",
+  result: { type: "list_my_persons", persons },
+});
 
 const SYNTH_PET_ID = "44444444-4444-4444-8444-444444444444";
 
@@ -456,11 +475,13 @@ describe("confirmacion robusta (la gente tipea 'si'/'ok'/'no', no la etiqueta)",
   });
 
   it("cancela el borrado en la confirmacion (no emite delete_person)", () => {
-    const withId = run(initialState, [text(BUTTON.borrar), text(SYNTH_PERSON_ID)]);
-    expect((withId.state as Extract<ConversationState, { flow: "delete" }>).step).toBe(
+    const started = step(initialState, text(BUTTON.borrar));
+    const listed = step(started.state, listMine([synthOwnedPerson()]));
+    const chosen = step(listed.state, text("1"));
+    expect((chosen.state as Extract<ConversationState, { flow: "delete" }>).step).toBe(
       "confirm",
     );
-    const cancelled = step(withId.state, text("no"));
+    const cancelled = step(chosen.state, text("no"));
     expect(cancelled.state).toEqual({ flow: "idle" });
     expect(cancelled.effect).toBeUndefined();
   });
@@ -642,8 +663,12 @@ describe("flujo buscar guiado", () => {
     // Presentacion honesta: posible coincidencia + parecido ponderado (no certeza).
     expect(txt).toContain("posible coincidencia");
     expect(txt).toContain("91%");
-    // El prompt de conexion invita a elegir un numero, sin exponer contacto.
-    expect(txt.toLowerCase()).toContain("numero");
+    // El prompt de conexion invita a TOCAR un boton, sin exponer contacto.
+    expect(txt.toLowerCase()).toContain("toca");
+    // Hay teclado: un boton por coincidencia (aqui "1") + salida explicita.
+    const buttons = withResults.replies.at(-1)?.buttons?.flat() ?? [];
+    expect(buttons).toContain("1");
+    expect(buttons).toContain(BUTTON.noConectar);
     expect(serializeAll(withResults)).not.toContain("contact_id");
     expect(serializeAll(withResults)).not.toContain("telefono");
   });
@@ -685,16 +710,27 @@ describe("flujo reencuentro (buscador elige)", () => {
     expect(serializeAll(chosen)).not.toContain("telefono");
   });
 
-  it("numero fuera de rango vuelve al menu SIN emitir request_reunion", () => {
+  it("numero fuera de rango re-pide sin expulsar (no emite request_reunion)", () => {
     const choosing = untilChoosing();
     const out = step(choosing.state, text("5"));
     expect(out.effect).toBeUndefined();
-    expect(out.state).toEqual({ flow: "idle" });
+    // Se queda en 'choosing' y re-pide con botones (antes expulsaba en silencio).
+    expect((out.state as Extract<ConversationState, { flow: "search" }>).step).toBe("choosing");
+    expect(joinReplies(out).toLowerCase()).toContain("no entendi");
+    expect(out.replies.at(-1)?.buttons?.flat()).toContain("1");
   });
 
-  it("texto no numerico vuelve al menu sin conectar (no insiste)", () => {
+  it("texto no numerico re-pide sin expulsar (antes el telefono te echaba)", () => {
     const choosing = untilChoosing();
-    const out = step(choosing.state, text("no gracias"));
+    const out = step(choosing.state, text("643420102"));
+    expect(out.effect).toBeUndefined();
+    expect((out.state as Extract<ConversationState, { flow: "search" }>).step).toBe("choosing");
+    expect(joinReplies(out).toLowerCase()).toContain("no entendi");
+  });
+
+  it("el boton 'No, volver al inicio' sale sin conectar", () => {
+    const choosing = untilChoosing();
+    const out = step(choosing.state, text(BUTTON.noConectar));
     expect(out.effect).toBeUndefined();
     expect(out.state).toEqual({ flow: "idle" });
   });
@@ -938,15 +974,25 @@ describe("flujo necesidades", () => {
 // ── Flujo borrar ─────────────────────────────────────────────────────────────
 
 describe("flujo borrar", () => {
-  it("id valido -> confirma -> emite delete_person -> ok", () => {
+  it("lista mis registros -> elijo -> confirmo -> emite delete_person -> ok", () => {
     const started = step(initialState, text(BUTTON.borrar));
     expect(started.state.flow).toBe("delete");
+    // Al entrar se listan MIS registros (sin pedir codigos): emite el efecto y carga.
+    expect(started.effect).toEqual({ type: "list_my_persons" });
+    expect((started.state as Extract<ConversationState, { flow: "delete" }>).step).toBe("loading");
 
-    const withId = step(started.state, text(SYNTH_PERSON_ID));
-    expect((withId.state as Extract<ConversationState, { flow: "delete" }>).step).toBe("confirm");
-    expect(joinReplies(withId)).toContain(SYNTH_PERSON_ID);
+    const listed = step(started.state, listMine([synthOwnedPerson()]));
+    expect((listed.state as Extract<ConversationState, { flow: "delete" }>).step).toBe("choosing");
+    // Muestra el nombre y botones para tocar; no expone contacto.
+    expect(joinReplies(listed)).toContain("Persona Sintetica");
+    expect(listed.replies.at(-1)?.buttons?.flat()).toContain("1");
 
-    const confirmed = step(withId.state, text(BUTTON.confirmar));
+    const chosen = step(listed.state, text("1"));
+    expect((chosen.state as Extract<ConversationState, { flow: "delete" }>).step).toBe("confirm");
+    // La confirmacion muestra el NOMBRE, no un codigo.
+    expect(joinReplies(chosen)).toContain("Persona Sintetica");
+
+    const confirmed = step(chosen.state, text(BUTTON.confirmar));
     expect(confirmed.replies).toHaveLength(0);
     const effect = confirmed.effect as Extract<Effect, { type: "delete_person" }>;
     expect(effect.type).toBe("delete_person");
@@ -960,28 +1006,44 @@ describe("flujo borrar", () => {
     expect(joinReplies(done)).toContain("borrado");
   });
 
-  it("id con formato invalido re-pide sin avanzar", () => {
+  it("sin registros propios avisa y vuelve al menu (no pide codigos)", () => {
     const started = step(initialState, text(BUTTON.borrar));
-    const res = step(started.state, text("no-es-un-uuid"));
-    expect((res.state as Extract<ConversationState, { flow: "delete" }>).step).toBe("id");
+    const listed = step(started.state, listMine([]));
+    expect(listed.state).toEqual({ flow: "idle" });
+    expect(joinReplies(listed).toLowerCase()).toContain("no encontramos registros");
+  });
+
+  it("numero fuera de la lista re-pide sin emitir efecto", () => {
+    const started = step(initialState, text(BUTTON.borrar));
+    const listed = step(started.state, listMine([synthOwnedPerson()]));
+    const res = step(listed.state, text("9"));
+    expect((res.state as Extract<ConversationState, { flow: "delete" }>).step).toBe("choosing");
     expect(res.effect).toBeUndefined();
+    expect(joinReplies(res).toLowerCase()).toContain("no entendi");
   });
 });
 
 // ── Flujo rescatado (el dueno marca como encontrado con vida) ─────────────────
 
 describe("flujo rescatado", () => {
-  it("id valido -> confirma -> emite mark_found -> ok", () => {
+  it("lista mis registros -> elijo -> confirmo -> emite mark_found -> ok", () => {
     const started = step(initialState, text(BUTTON.rescatado));
     expect(started.state.flow).toBe("mark_found");
+    expect(started.effect).toEqual({ type: "list_my_persons" });
 
-    const withId = step(started.state, text(SYNTH_PERSON_ID));
-    expect((withId.state as Extract<ConversationState, { flow: "mark_found" }>).step).toBe(
+    const listed = step(started.state, listMine([synthOwnedPerson()]));
+    expect((listed.state as Extract<ConversationState, { flow: "mark_found" }>).step).toBe(
+      "choosing",
+    );
+
+    const chosen = step(listed.state, text("1"));
+    expect((chosen.state as Extract<ConversationState, { flow: "mark_found" }>).step).toBe(
       "confirm",
     );
-    expect(joinReplies(withId)).toContain(SYNTH_PERSON_ID);
+    // La confirmacion muestra el NOMBRE elegido, no un codigo.
+    expect(joinReplies(chosen)).toContain("Persona Sintetica");
 
-    const confirmed = step(withId.state, text(BUTTON.confirmar));
+    const confirmed = step(chosen.state, text(BUTTON.confirmar));
     expect(confirmed.replies).toHaveLength(0);
     const effect = confirmed.effect as Extract<Effect, { type: "mark_found" }>;
     expect(effect.type).toBe("mark_found");
@@ -995,33 +1057,36 @@ describe("flujo rescatado", () => {
     expect(joinReplies(done)).toContain("encontrado");
   });
 
-  it("ante un fallo (incluido 'no es el dueno') vuelve a pedir el id con mensaje amable", () => {
+  it("ante un fallo (incluido 'no es el dueno') vuelve al menu con mensaje amable", () => {
     const started = step(initialState, text(BUTTON.rescatado));
-    const withId = step(started.state, text(SYNTH_PERSON_ID));
-    const confirmed = step(withId.state, text(BUTTON.confirmar));
+    const listed = step(started.state, listMine([synthOwnedPerson()]));
+    const chosen = step(listed.state, text("1"));
+    const confirmed = step(chosen.state, text(BUTTON.confirmar));
 
     const failed = step(confirmed.state, {
       kind: "effect_result",
       result: { type: "mark_found", ok: false },
     });
-    expect((failed.state as Extract<ConversationState, { flow: "mark_found" }>).step).toBe("id");
+    expect(failed.state).toEqual({ flow: "idle" });
     // No revela la causa (no confirma existencia ni pertenencia a un tercero).
     const out = joinReplies(failed);
+    expect(out.toLowerCase()).toContain("no pudimos");
     expect(out).not.toContain("403");
     expect(out).not.toContain("dueno");
   });
 
-  it("id con formato invalido re-pide sin avanzar", () => {
+  it("sin registros propios avisa y vuelve al menu (no pide codigos)", () => {
     const started = step(initialState, text(BUTTON.rescatado));
-    const res = step(started.state, text("no-es-un-uuid"));
-    expect((res.state as Extract<ConversationState, { flow: "mark_found" }>).step).toBe("id");
-    expect(res.effect).toBeUndefined();
+    const listed = step(started.state, listMine([]));
+    expect(listed.state).toEqual({ flow: "idle" });
+    expect(joinReplies(listed).toLowerCase()).toContain("no encontramos registros");
   });
 
   it("cancela en la confirmacion sin emitir mark_found", () => {
     const started = step(initialState, text(BUTTON.rescatado));
-    const withId = step(started.state, text(SYNTH_PERSON_ID));
-    const cancelled = step(withId.state, text(BUTTON.cancelar));
+    const listed = step(started.state, listMine([synthOwnedPerson()]));
+    const chosen = step(listed.state, text("1"));
+    const cancelled = step(chosen.state, text(BUTTON.cancelar));
     expect(cancelled.state).toEqual({ flow: "idle" });
     expect(cancelled.effect).toBeUndefined();
   });
@@ -1047,8 +1112,9 @@ describe("/cancelar vuelve a idle limpiando el draft", () => {
     const search = run(initialState, [text(BUTTON.buscar)]);
     expect(step(search.state, cmd("/cancelar")).state).toEqual({ flow: "idle" });
 
-    const del = run(initialState, [text(BUTTON.borrar), text(SYNTH_PERSON_ID)]);
-    expect(step(del.state, cmd("/cancelar")).state).toEqual({ flow: "idle" });
+    const del = run(initialState, [text(BUTTON.borrar)]);
+    const listed = step(del.state, listMine([synthOwnedPerson()]));
+    expect(step(listed.state, cmd("/cancelar")).state).toEqual({ flow: "idle" });
   });
 
   it("cancela en mitad de buscar mascota", () => {

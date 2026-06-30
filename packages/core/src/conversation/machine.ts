@@ -1,5 +1,5 @@
-import { edadSchema, idSchema, personCreateSchema, petCreateSchema } from "../schemas.js";
-import type { PersonCreate, PetCreate } from "../schemas.js";
+import { edadSchema, personCreateSchema, petCreateSchema } from "../schemas.js";
+import type { OwnedPerson, PersonCreate, PetCreate } from "../schemas.js";
 import { DEFAULT_FUENTE } from "../enums.js";
 import * as M from "./messages.js";
 import {
@@ -109,6 +109,15 @@ const SKIP_TOKENS: ReadonlySet<string> = new Set([
   "skip",
   "-",
 ]);
+// Salida explicita del paso de conectar (boton "No, volver al inicio"). Aceptamos el
+// texto del boton mas variantes naturales para no atrapar a la gente en el flujo.
+const NO_CONECTAR_TOKENS: ReadonlySet<string> = new Set([
+  normalizeToken(M.BUTTON.noConectar),
+  "volver al inicio",
+  "volver",
+  "inicio",
+  "menu",
+]);
 
 // ── Helpers de construccion de salida ────────────────────────────────────────
 
@@ -197,9 +206,11 @@ function startFlow(choice: FlowChoice): StepResult {
       // Igual que zonas: sin query, emite el effect y espera la lista de necesidades.
       return result({ flow: "browse_needs", step: "loading" }, [], { type: "list_needs" });
     case "delete":
-      return result({ flow: "delete", step: "id" }, [reply(M.DELETE_ASK_ID)]);
+      // Al entrar listamos los registros del DUENO (por canal). YA NO se pegan
+      // codigos: emitimos el efecto y esperamos la lista (espeja browse_zones).
+      return result({ flow: "delete", step: "loading" }, [], { type: "list_my_persons" });
     case "mark_found":
-      return result({ flow: "mark_found", step: "id" }, [reply(M.MARK_FOUND_ASK_ID)]);
+      return result({ flow: "mark_found", step: "loading" }, [], { type: "list_my_persons" });
     case "help":
       return result(initialState, [reply(M.HELP), reply(M.WELCOME, M.menuButtons())]);
   }
@@ -587,7 +598,12 @@ function stepSearch(state: SearchState, input: FlowInput): StepResult {
       const candidates = results.map((r) => r.id);
       return result(
         { flow: "search", step: "choosing", candidates },
-        [reply(M.searchResults(results)), reply(M.searchConnectPrompt(results.length))],
+        [
+          reply(M.searchResults(results)),
+          // Botones para TOCAR (1, 2...) + "No, volver al inicio": evita confundir
+          // "su numero" con un telefono, que dejaba a la gente colgada.
+          reply(M.searchConnectPrompt(results.length), M.connectButtons(results.length)),
+        ],
       );
     }
     // Resultado de la SOLICITUD de reencuentro: mensaje calido segun el estado.
@@ -614,13 +630,21 @@ function stepSearch(state: SearchState, input: FlowInput): StepResult {
   }
 
   if (state.step === "choosing") {
-    // El buscador elige a quien conectar por su NUMERO de la lista. Cualquier entrada
-    // que no sea un numero valido lo devuelve amablemente al menu (no insiste).
+    // El buscador elige a quien conectar TOCANDO el boton con su numero de la lista.
     const candidates = state.candidates ?? [];
+    // Boton explicito "No, volver al inicio": unica salida sin conectar. Asi un numero
+    // mal escrito NO expulsa en silencio (lo que confundia a la gente); re-pedimos.
+    if (isNoConectar(input.text)) {
+      return toMenu(M.CANCELLED);
+    }
     const personId = pickCandidate(input.text, candidates);
     if (personId === null) {
-      // No es un numero de la lista: volvemos al inicio sin conectar.
-      return toMenu(M.CANCELLED);
+      // No es un numero valido de la lista: re-pedimos sin expulsar, manteniendo los
+      // botones para que solo tenga que tocar. (Para salir, el boton de arriba.)
+      return result(
+        { flow: "search", step: "choosing", candidates },
+        [reply(M.REUNION_REQUEST_INVALID, M.connectButtons(candidates.length))],
+      );
     }
     // Emite el efecto de reencuentro; el adaptador anade el canal del buscador y el
     // backend pide el consentimiento de la otra parte. Sin contacto aqui (guardrail #1).
@@ -867,28 +891,39 @@ type DeleteState = Extract<ConversationState, { flow: "delete" }>;
 
 function stepDelete(state: DeleteState, input: FlowInput): StepResult {
   if (input.kind === "effect_result") {
-    if (state.step !== "deleting" || input.result.type !== "delete_person") {
-      return result({ flow: "delete", step: "id" }, [reply(M.DELETE_ASK_ID)]);
+    // Llego la lista de MIS registros: la mostramos para elegir, o avisamos si no hay.
+    if (state.step === "loading" && input.result.type === "list_my_persons") {
+      return showMyPersons(input.result.persons, "delete");
     }
-    return input.result.ok
-      ? toMenu(M.DELETE_DONE)
-      : result(
-          { flow: "delete", step: "id" },
-          [reply(M.DELETE_FAILED)],
-        );
+    // Llego el resultado del BORRADO en si.
+    if (state.step === "deleting" && input.result.type === "delete_person") {
+      return input.result.ok
+        ? toMenu(M.DELETE_DONE)
+        : result(initialState, [reply(M.DELETE_FAILED), reply(M.WELCOME, M.menuButtons())]);
+    }
+    // Resultado inesperado para el paso actual: reintentamos listando.
+    return result({ flow: "delete", step: "loading" }, [], { type: "list_my_persons" });
   }
 
   // input.kind === 'text'
   switch (state.step) {
-    case "id": {
-      const id = input.text.trim();
-      const parsed = idSchema.safeParse(id);
-      if (!parsed.success) {
-        return result({ flow: "delete", step: "id" }, [reply(M.DELETE_INVALID_ID)]);
+    case "loading":
+      // Esperando la lista; ignoramos texto (espeja browse_zones).
+      return result(state, []);
+    case "choosing": {
+      const persons = state.persons ?? [];
+      if (isCancel(input.text)) return toMenu(M.CANCELLED);
+      const chosen = pickPerson(input.text, persons);
+      if (chosen === null) {
+        // No es un numero valido de la lista: re-pedimos sin expulsar, con botones.
+        return result(
+          { flow: "delete", step: "choosing", persons },
+          [reply(M.DELETE_PICK_INVALID, M.pickPersonButtons(persons.length))],
+        );
       }
       return result(
-        { flow: "delete", step: "confirm", personId: parsed.data },
-        [reply(M.deleteConfirm(parsed.data), M.confirmButtons())],
+        { flow: "delete", step: "confirm", personId: chosen.id, nombre: chosen.nombre },
+        [reply(M.deleteConfirm(chosen.nombre), M.confirmButtons())],
       );
     }
     case "confirm": {
@@ -898,8 +933,8 @@ function stepDelete(state: DeleteState, input: FlowInput): StepResult {
       }
       if (!isConfirm(input.text)) {
         // Cualquier respuesta que no sea confirmar re-pide la confirmacion.
-        const pid = state.personId ?? "";
-        return result(state, [reply(M.deleteConfirm(pid), M.confirmButtons())]);
+        const nombre = state.nombre ?? "";
+        return result(state, [reply(M.deleteConfirm(nombre), M.confirmButtons())]);
       }
       const personId = state.personId ?? "";
       // La autorizacion real (que sea el dueno) la hace el adaptador/backend.
@@ -915,6 +950,39 @@ function stepDelete(state: DeleteState, input: FlowInput): StepResult {
   }
 }
 
+/**
+ * Muestra los registros del DUENO para que elija uno (borrar/marcar). Si no hay
+ * ninguno ligado a este canal, lo dice claro y vuelve al menu. Comparte el mismo
+ * picker para ambos flujos; solo cambian los textos del prompt y el "ninguno".
+ */
+function showMyPersons(
+  persons: readonly OwnedPerson[],
+  flow: "delete" | "mark_found",
+): StepResult {
+  if (persons.length === 0) {
+    const none = flow === "delete" ? M.DELETE_NONE : M.MARK_FOUND_NONE;
+    return result(initialState, [reply(none), reply(M.WELCOME, M.menuButtons())]);
+  }
+  const prompt = flow === "delete" ? M.DELETE_PICK : M.MARK_FOUND_PICK;
+  return result(
+    { flow, step: "choosing", persons },
+    [reply(M.myPersonsList(persons)), reply(prompt, M.pickPersonButtons(persons.length))],
+  );
+}
+
+/**
+ * Resuelve el registro elegido a partir del texto del usuario y la lista mostrada.
+ * Acepta un numero 1..N (1-indexado, como se muestra). Devuelve el registro, o null
+ * si el texto no es un numero valido dentro del rango.
+ */
+function pickPerson(text: string, persons: readonly OwnedPerson[]): OwnedPerson | null {
+  const trimmed = text.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n < 1 || n > persons.length) return null;
+  return persons[n - 1] ?? null;
+}
+
 // ── Flujo: rescatado (el dueno marca como encontrado con vida) ────────────────
 
 type MarkFoundState = Extract<ConversationState, { flow: "mark_found" }>;
@@ -927,28 +995,38 @@ type MarkFoundState = Extract<ConversationState, { flow: "mark_found" }>;
  */
 function stepMarkFound(state: MarkFoundState, input: FlowInput): StepResult {
   if (input.kind === "effect_result") {
-    if (state.step !== "marking" || input.result.type !== "mark_found") {
-      return result({ flow: "mark_found", step: "id" }, [reply(M.MARK_FOUND_ASK_ID)]);
+    // Llego la lista de MIS registros: la mostramos para elegir, o avisamos si no hay.
+    if (state.step === "loading" && input.result.type === "list_my_persons") {
+      return showMyPersons(input.result.persons, "mark_found");
     }
-    return input.result.ok
-      ? toMenu(M.MARK_FOUND_DONE)
-      : result(
-          { flow: "mark_found", step: "id" },
-          [reply(M.MARK_FOUND_FAILED)],
-        );
+    // Llego el resultado del MARCADO en si.
+    if (state.step === "marking" && input.result.type === "mark_found") {
+      return input.result.ok
+        ? toMenu(M.MARK_FOUND_DONE)
+        : result(initialState, [reply(M.MARK_FOUND_FAILED), reply(M.WELCOME, M.menuButtons())]);
+    }
+    // Resultado inesperado para el paso actual: reintentamos listando.
+    return result({ flow: "mark_found", step: "loading" }, [], { type: "list_my_persons" });
   }
 
   // input.kind === 'text'
   switch (state.step) {
-    case "id": {
-      const id = input.text.trim();
-      const parsed = idSchema.safeParse(id);
-      if (!parsed.success) {
-        return result({ flow: "mark_found", step: "id" }, [reply(M.MARK_FOUND_INVALID_ID)]);
+    case "loading":
+      // Esperando la lista; ignoramos texto (espeja browse_zones).
+      return result(state, []);
+    case "choosing": {
+      const persons = state.persons ?? [];
+      if (isCancel(input.text)) return toMenu(M.CANCELLED);
+      const chosen = pickPerson(input.text, persons);
+      if (chosen === null) {
+        return result(
+          { flow: "mark_found", step: "choosing", persons },
+          [reply(M.MARK_FOUND_PICK_INVALID, M.pickPersonButtons(persons.length))],
+        );
       }
       return result(
-        { flow: "mark_found", step: "confirm", personId: parsed.data },
-        [reply(M.markFoundConfirm(parsed.data), M.confirmButtons())],
+        { flow: "mark_found", step: "confirm", personId: chosen.id, nombre: chosen.nombre },
+        [reply(M.markFoundConfirm(chosen.nombre), M.confirmButtons())],
       );
     }
     case "confirm": {
@@ -958,8 +1036,8 @@ function stepMarkFound(state: MarkFoundState, input: FlowInput): StepResult {
       }
       if (!isConfirm(input.text)) {
         // Cualquier respuesta que no sea confirmar re-pide la confirmacion.
-        const pid = state.personId ?? "";
-        return result(state, [reply(M.markFoundConfirm(pid), M.confirmButtons())]);
+        const nombre = state.nombre ?? "";
+        return result(state, [reply(M.markFoundConfirm(nombre), M.confirmButtons())]);
       }
       const personId = state.personId ?? "";
       // La autorizacion real (que sea el dueno) la hace el adaptador/backend.
@@ -987,4 +1065,8 @@ function isConfirm(text: string): boolean {
 
 function isCancel(text: string): boolean {
   return CANCEL_TOKENS.has(normalizeToken(text));
+}
+
+function isNoConectar(text: string): boolean {
+  return NO_CONECTAR_TOKENS.has(normalizeToken(text));
 }

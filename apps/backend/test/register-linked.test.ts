@@ -73,6 +73,9 @@ function makeFakePersonRepo(calls: Calls): PersonRepo {
     async markFound() {
       /* no-op */
     },
+    async listByContact() {
+      return [];
+    },
   };
 }
 

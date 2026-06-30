@@ -1,4 +1,4 @@
-import type { PublicNeed, PublicZone } from "core";
+import type { OwnedPerson, PublicNeed, PublicZone } from "core";
 import {
   NotOwnerError,
   type BackendClient,
@@ -83,6 +83,10 @@ export interface MarkFoundCall {
   readonly channel: ChannelIdentity;
 }
 
+export interface ListMyPersonsCall {
+  readonly channel: ChannelIdentity;
+}
+
 export interface SearchCall {
   readonly query: string;
   readonly zona?: string;
@@ -127,6 +131,10 @@ interface FakeBackendOptions {
   readonly markFoundNotOwner?: boolean;
   /** Si true, `markFoundByChannel` lanza un error generico (fallo transitorio). */
   readonly failMarkFound?: boolean;
+  /** Registros propios que devuelve `listMyPersons` (vista del dueno, sin contacto). */
+  readonly myPersonsResults?: readonly OwnedPerson[];
+  /** Si true, `listMyPersons` lanza un error generico (fallo transitorio). */
+  readonly failListMyPersons?: boolean;
   /** Estado que devuelve `requestReunion` (por defecto 'requested'). */
   readonly reunionRequestStatus?: ReunionRequestStatus;
   /** Estado que devuelve `reunionConsent` (por defecto 'accepted_waiting'). */
@@ -145,6 +153,7 @@ export class FakeBackend implements BackendClient {
   readonly registerPetCalls: RegisterPetCall[] = [];
   readonly deleteCalls: DeleteCall[] = [];
   readonly markFoundCalls: MarkFoundCall[] = [];
+  readonly listMyPersonsCalls: ListMyPersonsCall[] = [];
   readonly searchCalls: SearchCall[] = [];
   readonly petSearchCalls: SearchCall[] = [];
   readonly requestReunionCalls: RequestReunionCall[] = [];
@@ -206,6 +215,14 @@ export class FakeBackend implements BackendClient {
     if (this.#opts.failMarkFound === true) {
       throw new Error("backend caido (sintetico)");
     }
+  }
+
+  async listMyPersons(channel: ChannelIdentity): Promise<readonly OwnedPerson[]> {
+    this.listMyPersonsCalls.push({ channel });
+    if (this.#opts.failListMyPersons === true) {
+      throw new Error("backend caido (sintetico)");
+    }
+    return this.#opts.myPersonsResults ?? [];
   }
 
   async searchPersons(
@@ -354,6 +371,18 @@ export function publicPersonFixture(
   // El cast es seguro para los tests: el fake del backend no valida el schema,
   // simulamos exactamente lo que llegaria por la interfaz.
   return base as unknown as PublicPersonResult;
+}
+
+/** Registro propio sintetico (vista del dueno, sin contacto) para marcar/borrar. */
+export function ownedPersonFixture(overrides: Partial<OwnedPerson> = {}): OwnedPerson {
+  return {
+    id: SYNTH_PERSON_ID,
+    nombre: "Persona Sintetica",
+    apellidos: null,
+    zona: "Zona Norte",
+    estado: "desaparecida",
+    ...overrides,
+  };
 }
 
 /**

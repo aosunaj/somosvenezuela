@@ -79,6 +79,23 @@ export type Person = z.infer<typeof personSchema>;
 export const publicPersonSchema = personSchema.omit({ contact_id: true });
 export type PublicPerson = z.infer<typeof publicPersonSchema>;
 
+/**
+ * Vista del DUENO sobre UNO de SUS registros, para listarlos y que elija cual
+ * marcar/borrar TOCANDO un numero, sin tener que pegar codigos. Solo lo necesario
+ * para reconocerlo (nombre, zona) mas el estado, y el `id` (interno, NO es PII de
+ * contacto). NUNCA incluye `contact_id` ni dato de contacto alguno (guardrail #1).
+ * A diferencia de la vista publica, SI puede incluir registros de menores: son del
+ * propio dueno, que necesita poder gestionarlos (no se expone contacto en ningun caso).
+ */
+export const ownedPersonSchema = z.object({
+  id: idSchema,
+  nombre: nombreObligatorio,
+  apellidos: textoOpcional,
+  zona: textoOpcional,
+  estado: estadoPersonaSchema,
+});
+export type OwnedPerson = z.infer<typeof ownedPersonSchema>;
+
 // ── Pet ─────────────────────────────────────────────────────────────────────
 
 /** Entrada de creacion de mascota. */

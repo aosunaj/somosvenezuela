@@ -60,6 +60,9 @@ function fakePersonRepo(
     async markFound() {
       /* no-op */
     },
+    async listByContact() {
+      return [];
+    },
   };
 }
 

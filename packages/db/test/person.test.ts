@@ -16,6 +16,8 @@ interface Captured {
   updates: Array<Record<string, unknown>>;
   /** Filtros .eq() aplicados (columna, valor). */
   filters: Array<{ column: string; value: unknown }>;
+  /** Argumentos pasados a .select() (cadena de columnas), para auditar la proyeccion. */
+  selects: string[];
 }
 
 interface FakeClientOptions {
@@ -38,7 +40,10 @@ function makeFakeClient(captured: Captured, options: FakeClientOptions = {}): Db
   const makeBuilder = (): Record<string, unknown> => {
     const result = { data: rows, error };
     const builder: Record<string, unknown> = {
-      select: () => builder,
+      select: (columns?: string) => {
+        if (typeof columns === "string") captured.selects.push(columns);
+        return builder;
+      },
       update: (values: Record<string, unknown>) => {
         captured.updates.push(values);
         return builder;
@@ -47,6 +52,10 @@ function makeFakeClient(captured: Captured, options: FakeClientOptions = {}): Db
         captured.filters.push({ column, value });
         return builder;
       },
+      // Cadena de lectura de listByContact: order().limit().returns() son fluidos.
+      order: () => builder,
+      limit: () => builder,
+      returns: () => builder,
       then: (resolve: (v: unknown) => unknown) => resolve(result),
     };
     return builder;
@@ -62,7 +71,7 @@ function makeFakeClient(captured: Captured, options: FakeClientOptions = {}): Db
 }
 
 function makeCaptured(): Captured {
-  return { fromRelations: [], updates: [], filters: [] };
+  return { fromRelations: [], updates: [], filters: [], selects: [] };
 }
 
 describe("personRepo.markFound (rescatado por el dueno)", () => {
@@ -108,5 +117,65 @@ describe("personRepo.markFound (rescatado por el dueno)", () => {
     );
 
     await expect(repo.markFound(PERSON_ID)).rejects.toThrow();
+  });
+});
+
+// listByContact alimenta "mis registros" del bot (marcar/borrar sin codigos). Es del
+// DUENO: lee la tabla base (puede incluir menores) PERO solo debe proyectar columnas
+// no sensibles. Este test fija la proyeccion como contrato (guardrail #1: jamas
+// contact_id) y verifica el filtro por contacto y la salida sin contacto.
+const CONTACT_ID = "c0000000-0000-4000-8000-000000000001";
+
+describe("personRepo.listByContact (lista del dueno, sin contacto)", () => {
+  it("lee persons filtrando por contact_id y proyecta SOLO columnas no sensibles", async () => {
+    const captured = makeCaptured();
+    // El fake devuelve una fila CONTAMINADA con contact_id para probar que ni la
+    // proyeccion ni el mapeo lo dejan salir.
+    const repo = createPersonRepo(
+      makeFakeClient(captured, {
+        rows: [
+          {
+            id: PERSON_ID,
+            nombre: "Persona Sintetica",
+            apellidos: null,
+            zona: "Zona Norte",
+            estado: "desaparecida",
+            contact_id: CONTACT_ID,
+          },
+        ],
+      }),
+    );
+
+    const result = await repo.listByContact(CONTACT_ID);
+
+    // Lee la tabla base persons (no la vista publica).
+    expect(captured.fromRelations).toContain("persons");
+    // Filtra por el contacto dueno.
+    expect(captured.filters).toEqual([{ column: "contact_id", value: CONTACT_ID }]);
+    // La proyeccion NUNCA pide contact_id (guardrail #1) y trae las 5 columnas esperadas.
+    const projection = captured.selects.join(" ");
+    expect(projection).not.toContain("contact_id");
+    for (const col of ["id", "nombre", "apellidos", "zona", "estado"]) {
+      expect(projection).toContain(col);
+    }
+    // La salida es la vista del dueno, sin contacto, aunque la fila viniera contaminada.
+    expect(result).toEqual([
+      {
+        id: PERSON_ID,
+        nombre: "Persona Sintetica",
+        apellidos: null,
+        zona: "Zona Norte",
+        estado: "desaparecida",
+      },
+    ]);
+    expect(JSON.stringify(result)).not.toContain(CONTACT_ID);
+    expect(JSON.stringify(result)).not.toContain("contact_id");
+  });
+
+  it("devuelve lista vacia cuando el contacto no tiene registros", async () => {
+    const captured = makeCaptured();
+    const repo = createPersonRepo(makeFakeClient(captured, { rows: [] }));
+
+    expect(await repo.listByContact(CONTACT_ID)).toEqual([]);
   });
 });

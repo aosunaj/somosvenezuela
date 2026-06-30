@@ -1,4 +1,5 @@
 import type {
+  OwnedPerson,
   Person,
   PersonCreate,
   PublicPerson,
@@ -68,12 +69,24 @@ function fakeSearchResult(score: number): PublicPersonResult {
   };
 }
 
+/** Vista del dueno sintetica (sin contacto): lo que devolveria listByContact. */
+function fakeOwnedPerson(): OwnedPerson {
+  return {
+    id: SYNTH_PERSON_ID,
+    nombre: "Persona Sintetica",
+    apellidos: "Apellido Ficticio",
+    zona: "Zona Sintetica Norte",
+    estado: "desaparecida",
+  };
+}
+
 /** Registros de lo que recibieron los repos, para aserciones. */
 export interface RepoCalls {
   personCreated: PersonCreate[];
   searchCreated: SearchCreate[];
   removedIds: string[];
   markedFoundIds: string[];
+  listedByContactIds: string[];
   searchQueries: Array<{ query: string; zona?: string }>;
   matchCreated: MatchCreate[];
   stateAudited: PersonStateChangeInput[];
@@ -85,6 +98,7 @@ export function makeRepoCalls(): RepoCalls {
     searchCreated: [],
     removedIds: [],
     markedFoundIds: [],
+    listedByContactIds: [],
     searchQueries: [],
     matchCreated: [],
     stateAudited: [],
@@ -121,6 +135,10 @@ export function makeFakePersonRepo(calls: RepoCalls): PersonRepo {
     async searchPersonsPublic(query, zona) {
       calls.searchQueries.push(zona === undefined ? { query } : { query, zona });
       return [fakeSearchResult(0.91), fakeSearchResult(0.42)];
+    },
+    async listByContact(contactId) {
+      calls.listedByContactIds.push(contactId);
+      return [fakeOwnedPerson()];
     },
     async remove(id) {
       calls.removedIds.push(id);

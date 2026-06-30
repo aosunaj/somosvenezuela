@@ -1,5 +1,6 @@
 import type {
   ConversationState,
+  OwnedPerson,
   PublicNeed,
   PublicPerson,
   PublicPet,
@@ -126,6 +127,13 @@ export interface BackendClient {
   ): Promise<{ readonly id: string }>;
   deleteByChannel(personId: string, channel: ChannelIdentity): Promise<void>;
   markFoundByChannel(personId: string, channel: ChannelIdentity): Promise<void>;
+  /**
+   * Lista los registros que el DUENO creo desde su canal, para que elija cual
+   * marcar/borrar SIN pegar codigos (POST /persons/mine-by-channel). Devuelve la
+   * vista del dueno (`OwnedPerson`): SIN contacto (guardrail #1). Canal desconocido o
+   * sin registros => lista vacia.
+   */
+  listMyPersons(channel: ChannelIdentity): Promise<readonly OwnedPerson[]>;
   searchPersons(
     query: string,
     zona?: string,
