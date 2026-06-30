@@ -201,3 +201,46 @@ export const publicNeedSchema = z.object({
   updated_at: z.iso.datetime({ offset: true }),
 });
 export type PublicNeed = z.infer<typeof publicNeedSchema>;
+
+// ── Alive Messages (Spec 06) ─────────────────────────────────────────────────
+//
+// Un mensaje "estoy vivo" que el autor deja para que su familia reciba cuando
+// llegan y confirman el reencuentro. Slice 1: texto. Slice 2+: voz/Cloudinary.
+//
+// GUARDRAIL: el mensaje NO lleva datos de contacto del autor; solo autorNombre
+// (nombre libre). El `personId` es un uuid interno (FK persons), nunca un dato
+// de contacto.
+
+/** Tipo de mensaje de vida. El enum incluye 'voz' para aceptar el campo en Slice 1,
+ *  aunque la subida real a Cloudinary llega en un slice posterior. */
+export const aliveMessageTipoSchema = z.enum(["texto", "voz"]);
+export type AliveMessageTipo = z.infer<typeof aliveMessageTipoSchema>;
+
+/**
+ * Entrada de creacion de un mensaje "estoy vivo".
+ * autorNombre: nombre libre del autor (no un contact_id ni PII estructurado).
+ * contenido: cuerpo del mensaje (texto libre; en Slice 2+, URL de Cloudinary para voz).
+ * zona: zona libre del autor al momento de dejar el mensaje.
+ * personId: FK interna a persons (nil-able; el autor puede no estar registrado).
+ */
+export const aliveMessageCreateSchema = z.object({
+  autorNombre: z.string().trim().min(1),
+  tipo: aliveMessageTipoSchema,
+  contenido: z.string().trim().min(1),
+  zona: z.string().trim().min(1).optional(),
+  personId: idSchema.optional(),
+});
+export type AliveMessageCreate = z.infer<typeof aliveMessageCreateSchema>;
+
+/** Registro completo de un mensaje "estoy vivo" (espeja la tabla `alive_messages`). */
+export const aliveMessageSchema = z.object({
+  id: idSchema,
+  autorNombre: z.string(),
+  tipo: aliveMessageTipoSchema,
+  contenido: z.string(),
+  zona: z.string().nullable(),
+  personId: idSchema.nullable(),
+  entregado: z.boolean(),
+  createdAt: z.iso.datetime({ offset: true }),
+});
+export type AliveMessage = z.infer<typeof aliveMessageSchema>;

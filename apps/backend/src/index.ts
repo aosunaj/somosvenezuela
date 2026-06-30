@@ -60,6 +60,8 @@ async function main(): Promise<void> {
     // las rutas exigen el header x-bot-secret. DEBE configurarse en Render en el
     // backend y en AMBOS bots (corte a produccion).
     botSecret: process.env["BOT_BACKEND_SECRET"],
+    // Mensajes "estoy vivo" (Spec 06, Slice 1). No lleva contact_id.
+    aliveMessagesRepo: repos.aliveMessages,
   };
 
   const app = await buildApp(deps);

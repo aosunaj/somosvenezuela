@@ -1,4 +1,5 @@
 import type {
+  AliveMessagesRepo,
   AuditRepo,
   ChannelLinkRepo,
   ChannelRepo,
@@ -89,4 +90,6 @@ export interface AppDeps {
    * Por debajo → gate humano. La IA sugiere, los humanos confirman (guardrail #4).
    */
   autoMatchThreshold: number;
+  /** Mensajes "estoy vivo" (Spec 06). Sin datos de contacto; solo autorNombre libre. */
+  aliveMessagesRepo: AliveMessagesRepo;
 }

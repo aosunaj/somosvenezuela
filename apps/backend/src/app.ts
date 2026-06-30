@@ -28,6 +28,7 @@ import { registerSearchesRoutes } from "./routes/searches.js";
 import { registerConsentRoutes } from "./routes/consent.js";
 import { registerRelayRoutes } from "./routes/relay.js";
 import { registerRescatadoRoutes } from "./routes/rescatado.js";
+import { registerAliveMessagesRoutes } from "./routes/alive-messages.js";
 
 // App factory de la API.
 //
@@ -152,6 +153,12 @@ export async function buildApp(
     notificationRepo: deps.notificationRepo,
     channelLinkRepo: deps.channelLinkRepo,
     // Secreto compartido bot<->backend (Modelo B): la ruta /rescatado lo exige.
+    botSecret: deps.botSecret,
+  });
+  // Mensajes "estoy vivo" (Spec 06, Slice 1): texto. Voz/Cloudinary en slices futuros.
+  // Auth: secreto compartido bot<->backend (Modelo B), igual que /rescatado.
+  registerAliveMessagesRoutes(app, {
+    aliveMessagesRepo: deps.aliveMessagesRepo,
     botSecret: deps.botSecret,
   });
 

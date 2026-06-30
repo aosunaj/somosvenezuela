@@ -17,6 +17,7 @@ export * from "./need.js";
 export * from "./relay.js";
 export * from "./audit.js";
 export * from "./consent.js";
+export * from "./alive-messages.js";
 
 import type { DbClient } from "../client.js";
 import { createChannelRepo, type ChannelRepo } from "./channel.js";
@@ -47,6 +48,10 @@ import {
 import { createRelayRepo, type RelayRepo } from "./relay.js";
 import { createAuditRepo, type AuditRepo } from "./audit.js";
 import { createConsentRepo, type ConsentRepo } from "./consent.js";
+import {
+  createAliveMessagesRepo,
+  type AliveMessagesRepo,
+} from "./alive-messages.js";
 
 /** Conjunto de repositorios de la capa de datos. */
 export interface Repos {
@@ -79,6 +84,8 @@ export interface Repos {
   autoConnectionAudit: AuditRepo;
   /** INTERNO: solo backend. Consentimiento bilateral y apertura de relay (plpgsql). */
   consent: ConsentRepo;
+  /** Mensajes "estoy vivo" que el autor deja para su familia (Spec 06). */
+  aliveMessages: AliveMessagesRepo;
 }
 
 /**
@@ -103,5 +110,6 @@ export function createRepos(client: DbClient): Repos {
     relay: createRelayRepo(client),
     autoConnectionAudit: createAuditRepo(client),
     consent: createConsentRepo(client),
+    aliveMessages: createAliveMessagesRepo(client),
   };
 }

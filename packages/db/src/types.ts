@@ -206,3 +206,21 @@ export interface ChannelRow {
   opt_in: boolean;
   created_at: string;
 }
+
+// ── alive_messages ─────────────────────────────────────────────────────────
+
+/**
+ * Fila de la tabla base `alive_messages` tal como llega de Supabase (snake_case).
+ * NO contiene datos de contacto: autor_nombre es un nombre libre, no un contact_id.
+ * Espeja migrations/0001_init.sql.
+ */
+export interface AliveMessageRow {
+  id: string;
+  person_id: string | null;
+  autor_nombre: string;
+  tipo: string;
+  contenido: string;
+  zona: string | null;
+  entregado: boolean;
+  created_at: string;
+}
