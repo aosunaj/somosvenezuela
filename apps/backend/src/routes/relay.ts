@@ -3,20 +3,31 @@ import { plataformaCanalSchema } from "core";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import type { AppDeps } from "../deps.js";
+import { requestReveal } from "../services/relay-reveal.js";
 import { apiError } from "../errors.js";
 import { BOT_SECRET_HEADER, isBotSecretValid } from "../security.js";
 
 // Rutas del relay de mensajes (Model B — relay_sessions).
 //
-// POST /relay/:id/close — la parte que quiere terminar cierra el relay.
+// POST /relay/:id/close  — la parte que quiere terminar cierra el relay.
 //   Notifica al otro lado con un mensaje de relay cerrado (sin PII).
 //
-// El reveal bilateral (POST /relay/:id/reveal) se implementa en PR4.
+// POST /relay/:id/reveal — solicitud de revelado bilateral de contacto (PR7).
+//   Cada parte debe pedir explícitamente "compartir mi contacto". El teléfono
+//   SOLO se intercambia cuando AMBAS partes lo solicitaron. Antes de ese momento,
+//   ningún payload contiene PII de contacto. Canal ajeno al relay → 403.
 //
 // PRIVACIDAD: ninguna respuesta expone PII. El cliente envía (plataforma, chatId)
 // — el mismo patrón by-channel que delete-secure/mark-found-secure/persons-mine —
 // y el backend resuelve el channel_id (UUID interno) server-side. El bot NUNCA
 // conoce ni envía channel_id.
+
+const channelBodySchema = z
+  .object({
+    plataforma: plataformaCanalSchema,
+    chatId: z.string().trim().min(1),
+  })
+  .strict();
 
 /**
  * Schema del body de POST /relay/:id/close. Exportado para tests de CONTRATO:
@@ -25,16 +36,28 @@ import { BOT_SECRET_HEADER, isBotSecretValid } from "../security.js";
 export const relayCloseBodySchema = z
   .object({
     /** Identidad de canal de quien solicita el cierre (plataforma + chatId). */
-    channel: z
-      .object({
-        plataforma: plataformaCanalSchema,
-        chatId: z.string().trim().min(1),
-      })
-      .strict(),
+    channel: channelBodySchema,
+  })
+  .strict();
+
+/**
+ * Schema del body de POST /relay/:id/reveal. Exportado para tests de CONTRATO:
+ * el cliente del bot debe producir un payload que valide contra este schema real.
+ */
+export const relayRevealBodySchema = z
+  .object({
+    /** Identidad de canal de quien solicita el reveal (plataforma + chatId). */
+    channel: channelBodySchema,
   })
   .strict();
 
 const closeResponseSchema = z.object({ ok: z.literal(true) }).strict();
+const revealResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    status: z.enum(["waiting_other", "revealed"]),
+  })
+  .strict();
 const errorResponseSchema = z.object({ error: z.string(), message: z.string() }).strict();
 
 export function registerRelayRoutes(app: FastifyInstance, deps: AppDeps): void {
@@ -92,6 +115,73 @@ export function registerRelayRoutes(app: FastifyInstance, deps: AppDeps): void {
       });
 
       return reply.code(200).send({ ok: true });
+    },
+  });
+
+  // POST /relay/:id/reveal — solicitar revelado bilateral de contacto.
+  //
+  // Cada parte DEBE pedir explícitamente. El backend deriva server-side qué
+  // parte (a/b) es el canal que llama (patrón by-channel, B5). Un canal ajeno
+  // al relay recibe 403. El teléfono solo viaja cuando AMBAS partes lo pidieron.
+  typed.route({
+    method: "POST",
+    url: "/relay/:id/reveal",
+    schema: {
+      params: z.object({ id: z.string().uuid() }),
+      body: relayRevealBodySchema,
+      response: {
+        200: revealResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: async (request, reply) => {
+      // AUTH (Modelo B): fail-closed cuando botSecret está configurado.
+      if (!isBotSecretValid(request.headers[BOT_SECRET_HEADER], deps.botSecret)) {
+        return reply.code(401).send(apiError("unauthorized", "Secreto de bot invalido."));
+      }
+
+      const { id: relayId } = request.params;
+      const { channel } = request.body;
+
+      // 1) Resolver channel_id del canal que llama (plataforma, chatId) → UUID interno.
+      //    Sin canal resuelto → 404 (no revelar si el relay existe o no).
+      const callerChannelId = await deps.channelLinkRepo.findChannelIdByChannel(
+        channel.plataforma,
+        channel.chatId,
+      );
+      if (callerChannelId === null) {
+        return reply.code(404).send(apiError("not_found", "Relay no encontrado."));
+      }
+
+      // 2) Leer las partes del relay para verificar que el canal pertenece al relay.
+      const parties = await deps.relayRepo.getRelayParties(relayId);
+      if (parties === null) {
+        return reply.code(404).send(apiError("not_found", "Relay no encontrado."));
+      }
+
+      // 3) Derivar server-side qué parte es el canal. Canal ajeno → 403.
+      const isPartyA = callerChannelId === parties.partyAChannelId;
+      const isPartyB = callerChannelId === parties.partyBChannelId;
+      if (!isPartyA && !isPartyB) {
+        return reply
+          .code(403)
+          .send(apiError("forbidden", "Este canal no participa en el relay."));
+      }
+
+      // 4) Delegar en el servicio de reveal (puro, sin Fastify).
+      const result = await requestReveal(
+        {
+          relayRepo: deps.relayRepo,
+          contactRepo: deps.contactRepo,
+          notificationRepo: deps.notificationRepo,
+          auditRepo: deps.auditRepo,
+        },
+        { relayId, callerChannelId },
+      );
+
+      return reply.code(200).send({ ok: true, status: result.status });
     },
   });
 }

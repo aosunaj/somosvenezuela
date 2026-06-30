@@ -1,4 +1,4 @@
-import { createServiceClient, createRepos } from "db";
+import { createServiceClient, createRepos, createContactRepo } from "db";
 import { buildApp } from "./app.js";
 import type { AppDeps } from "./deps.js";
 import { sweepExpiredConsents } from "./services/sweep.js";
@@ -48,6 +48,9 @@ async function main(): Promise<void> {
     relayRepo: repos.relay,
     auditRepo: repos.autoConnectionAudit,
     consentRepo: repos.consent,
+    // SENSIBLE: solo para reveal bilateral (POST /relay/:id/reveal). El teléfono
+    // solo se lee cuando AMBAS partes han dado su consentimiento explícito.
+    contactRepo: createContactRepo(client),
     autoMatchThreshold: Number(process.env["AUTO_MATCH_THRESHOLD"] ?? "0.85"),
     // Secreto de servicio para operaciones privilegiadas (DELETE). Si no esta
     // definido, esas operaciones quedan deshabilitadas (responden 401).
