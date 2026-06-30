@@ -69,6 +69,8 @@ function makeDeps(isMinorResult = false): AppDeps {
     consentRepo: {} as AppDeps["consentRepo"],
     autoMatchThreshold: 0.85,
     serviceToken: "test-token",
+    // Esta ruta (/searches) no es del Modelo B: no exige el secreto del bot.
+    botSecret: undefined,
   };
 }
 

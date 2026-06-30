@@ -52,6 +52,11 @@ async function main(): Promise<void> {
     // Secreto de servicio para operaciones privilegiadas (DELETE). Si no esta
     // definido, esas operaciones quedan deshabilitadas (responden 401).
     serviceToken: process.env["SERVICE_TOKEN"],
+    // Secreto compartido bot<->backend para las rutas by-channel del Modelo B
+    // (consent/respond, relay/close, rescatado). FAIL-CLOSED cuando esta presente:
+    // las rutas exigen el header x-bot-secret. DEBE configurarse en Render en el
+    // backend y en AMBOS bots (corte a produccion).
+    botSecret: process.env["BOT_BACKEND_SECRET"],
   };
 
   const app = await buildApp(deps);

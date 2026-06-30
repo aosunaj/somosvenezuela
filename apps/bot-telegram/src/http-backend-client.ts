@@ -95,10 +95,28 @@ const reunionConsentResponseSchema = z.object({
 
 export class HttpBackendClient implements BackendClient {
   readonly #baseUrl: string;
+  readonly #botSecret: string | undefined;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, botSecret?: string) {
     // Normalizamos la base para evitar dobles barras al concatenar rutas.
     this.#baseUrl = baseUrl.replace(/\/+$/, "");
+    // Secreto compartido bot<->backend para las rutas by-channel del Modelo B
+    // (consent/respond, relay/close, rescatado). Se lee de BOT_BACKEND_SECRET en el
+    // arranque del bot y viaja en el header x-bot-secret de esas llamadas. NUNCA se
+    // imprime ni se expone.
+    this.#botSecret = botSecret;
+  }
+
+  /**
+   * Headers para las rutas del Modelo B: content-type + el secreto compartido
+   * x-bot-secret (solo si esta configurado). El backend lo exige en fail-closed.
+   */
+  #modelBHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (this.#botSecret !== undefined && this.#botSecret.length > 0) {
+      headers["x-bot-secret"] = this.#botSecret;
+    }
+    return headers;
   }
 
   async createPerson(data: unknown): Promise<{ readonly id: string }> {
@@ -433,7 +451,8 @@ export class HttpBackendClient implements BackendClient {
       `${this.#baseUrl}/relay/${encodeURIComponent(relayId)}/close`,
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        // Ruta del Modelo B: incluye el secreto compartido x-bot-secret.
+        headers: this.#modelBHeaders(),
         body: JSON.stringify({
           channel: { plataforma: channel.plataforma, chatId: channel.chatId },
         }),
@@ -453,7 +472,8 @@ export class HttpBackendClient implements BackendClient {
       `${this.#baseUrl}/consent/${encodeURIComponent(consentId)}/respond`,
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        // Ruta del Modelo B: incluye el secreto compartido x-bot-secret.
+        headers: this.#modelBHeaders(),
         body: JSON.stringify({
           decision,
           channel: { plataforma: channel.plataforma, chatId: channel.chatId },
@@ -470,7 +490,8 @@ export class HttpBackendClient implements BackendClient {
       `${this.#baseUrl}/relay/${encodeURIComponent(relayId)}/reveal`,
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        // Ruta del Modelo B: incluye el secreto compartido x-bot-secret.
+        headers: this.#modelBHeaders(),
         body: JSON.stringify({
           channel: { plataforma: channel.plataforma, chatId: channel.chatId },
         }),
@@ -503,7 +524,8 @@ export class HttpBackendClient implements BackendClient {
     try {
       const res = await fetch(`${this.#baseUrl}/rescatado`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        // Ruta del Modelo B: incluye el secreto compartido x-bot-secret.
+        headers: this.#modelBHeaders(),
         // Solo enviamos el id publico de la persona y el canal del buscador.
         // NUNCA contact_id: el backend resuelve el vinculo por canal (guardrail #1).
         body: JSON.stringify({

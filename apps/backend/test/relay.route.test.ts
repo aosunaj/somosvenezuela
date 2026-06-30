@@ -9,6 +9,10 @@ import type { AppDeps } from "../src/deps.js";
 const RELAY_ID = "e0000001-0000-4000-8000-000000000001";
 const CHANNEL_ID = "c0000001-0000-4000-8000-000000000001";
 const CHAT_ID = "tg-12345";
+// Secreto compartido bot<->backend (Modelo B). El test lo inyecta en deps y lo
+// envia en el header x-bot-secret de las requests que deben pasar.
+const BOT_SECRET = "test-bot-secret";
+const BOT_HEADERS = { "x-bot-secret": BOT_SECRET };
 
 function makeDeps(): AppDeps {
   return {
@@ -50,10 +54,36 @@ function makeDeps(): AppDeps {
     } as unknown as AppDeps["consentRepo"],
     autoMatchThreshold: 0.85,
     serviceToken: "test-token",
+    botSecret: BOT_SECRET,
   };
 }
 
 describe("POST /relay/:id/close", () => {
+  it("401 si falta el header x-bot-secret (Modelo B, fail-closed)", async () => {
+    const app = await buildApp(makeDeps());
+    const res = await app.inject({
+      method: "POST",
+      url: `/relay/${RELAY_ID}/close`,
+      payload: { channel: { plataforma: "telegram", chatId: CHAT_ID } },
+      // sin header x-bot-secret
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("401 si el header x-bot-secret es incorrecto", async () => {
+    const deps = makeDeps();
+    const app = await buildApp(deps);
+    const res = await app.inject({
+      method: "POST",
+      url: `/relay/${RELAY_ID}/close`,
+      headers: { "x-bot-secret": "secreto-equivocado" },
+      payload: { channel: { plataforma: "telegram", chatId: CHAT_ID } },
+    });
+    expect(res.statusCode).toBe(401);
+    // No debe ejecutar ningun efecto.
+    expect((deps.relayRepo as { closeRelay: ReturnType<typeof vi.fn> }).closeRelay).not.toHaveBeenCalled();
+  });
+
   it("400 si falta channel (quien cierra el relay)", async () => {
     const app = await buildApp(makeDeps());
     const res = await app.inject({
@@ -79,6 +109,7 @@ describe("POST /relay/:id/close", () => {
     const res = await app.inject({
       method: "POST",
       url: `/relay/${RELAY_ID}/close`,
+      headers: BOT_HEADERS,
       payload: { channel: { plataforma: "telegram", chatId: CHAT_ID } },
     });
     expect(res.statusCode).toBe(200);
@@ -92,6 +123,7 @@ describe("POST /relay/:id/close", () => {
     const res = await app.inject({
       method: "POST",
       url: `/relay/${RELAY_ID}/close`,
+      headers: BOT_HEADERS,
       payload: { channel: { plataforma: "telegram", chatId: CHAT_ID } },
     });
     expect(res.statusCode).toBe(404);
@@ -103,6 +135,7 @@ describe("POST /relay/:id/close", () => {
     await app.inject({
       method: "POST",
       url: `/relay/${RELAY_ID}/close`,
+      headers: BOT_HEADERS,
       payload: { channel: { plataforma: "telegram", chatId: CHAT_ID } },
     });
     expect((deps.relayRepo as { closeRelay: ReturnType<typeof vi.fn> }).closeRelay).toHaveBeenCalledWith(RELAY_ID);

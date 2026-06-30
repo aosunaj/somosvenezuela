@@ -7,7 +7,7 @@ import type { ConsentParty } from "db";
 import { respondConsent } from "../services/consent.js";
 import { sweepExpiredConsents } from "../services/sweep.js";
 import { apiError } from "../errors.js";
-import { timingSafeEqualString } from "../security.js";
+import { BOT_SECRET_HEADER, isBotSecretValid, timingSafeEqualString } from "../security.js";
 
 /**
  * Valida el token de servicio en tiempo constante (M3, guardrail #6): evita filtrar
@@ -78,11 +78,18 @@ export function registerConsentRoutes(app: FastifyInstance, deps: AppDeps): void
       body: respondBodySchema,
       response: {
         200: respondResponseSchema,
+        401: errorResponseSchema,
         403: errorResponseSchema,
         404: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
+      // AUTH (Modelo B): exigir el secreto compartido bot<->backend. FAIL-CLOSED
+      // cuando deps.botSecret esta configurado; header faltante/incorrecto -> 401.
+      if (!isBotSecretValid(request.headers[BOT_SECRET_HEADER], deps.botSecret)) {
+        return reply.code(401).send(apiError("unauthorized", "Secreto de bot invalido."));
+      }
+
       const { id: consentId } = request.params;
       const { channel, decision } = request.body;
 

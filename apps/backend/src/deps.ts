@@ -53,6 +53,16 @@ export interface AppDeps {
    */
   serviceToken: string | undefined;
   /**
+   * Secreto compartido bot<->backend para las rutas by-channel del Modelo B
+   * (consent/respond, relay/close, rescatado). Se lee de BOT_BACKEND_SECRET en el
+   * arranque. Las rutas exigen el header x-bot-secret y lo comparan en tiempo
+   * constante. FAIL-CLOSED: si esta configurado, se exige siempre (header
+   * faltante o incorrecto -> 401, sin efecto). Si esta vacio/indefinido (dev/test
+   * sin secreto), la verificacion se omite para no romper el desarrollo local.
+   * En produccion (Render) DEBE configurarse en el backend y en ambos bots.
+   */
+  botSecret: string | undefined;
+  /**
    * Relay de mensajes entre dos canales tras doble consentimiento (relay_sessions).
    * SENSIBLE: solo backend.
    */

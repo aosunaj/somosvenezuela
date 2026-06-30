@@ -11,6 +11,10 @@ const SEARCHER_CHAN = "c0000001-0000-4000-8000-000000000001";
 const REGISTRANT_CHAN = "c0000002-0000-4000-8000-000000000002";
 // Canal del buscador (plataforma + chatId) que resuelve a SEARCHER_CHAN.
 const SEARCHER_CHANNEL = { plataforma: "telegram", chatId: "tg-searcher" } as const;
+// Secreto compartido bot<->backend (Modelo B). El test lo inyecta en deps y lo
+// envia en el header x-bot-secret de las requests que deben llegar al handler.
+const BOT_SECRET = "test-bot-secret";
+const BOT_HEADERS = { "x-bot-secret": BOT_SECRET };
 
 function makeDeps(): AppDeps {
   return {
@@ -60,6 +64,7 @@ function makeDeps(): AppDeps {
     } as unknown as AppDeps["consentRepo"],
     autoMatchThreshold: 0.85,
     serviceToken: "test-token",
+    botSecret: BOT_SECRET,
   };
 }
 
@@ -70,6 +75,22 @@ const EXPIRED_SESSION = {
 };
 
 describe("POST /consent/:id/respond — contrato by-channel (B5)", () => {
+  it("401 si falta el header x-bot-secret (Modelo B, fail-closed)", async () => {
+    const deps = makeDeps();
+    const app = await buildApp(deps);
+    const res = await app.inject({
+      method: "POST",
+      url: `/consent/${CONSENT_ID}/respond`,
+      payload: { channel: SEARCHER_CHANNEL, decision: "aceptado" },
+      // sin header x-bot-secret
+    });
+    expect(res.statusCode).toBe(401);
+    // No debe ejecutar ningun efecto del flujo de consentimiento.
+    expect(
+      (deps.consentRepo as { acceptConsent: ReturnType<typeof vi.fn> }).acceptConsent,
+    ).not.toHaveBeenCalled();
+  });
+
   it("400 si falta channel", async () => {
     const app = await buildApp(makeDeps());
     const res = await app.inject({
@@ -117,6 +138,7 @@ describe("POST /consent/:id/respond — contrato by-channel (B5)", () => {
     const res = await app.inject({
       method: "POST",
       url: `/consent/${CONSENT_ID}/respond`,
+      headers: BOT_HEADERS,
       payload: {
         channel: SEARCHER_CHANNEL,
         decision: "aceptado",
@@ -138,6 +160,7 @@ describe("POST /consent/:id/respond — contrato by-channel (B5)", () => {
     const res = await app.inject({
       method: "POST",
       url: `/consent/${CONSENT_ID}/respond`,
+      headers: BOT_HEADERS,
       payload: {
         channel: { plataforma: "telegram", chatId: "tg-registrant" },
         decision: "rechazado",
@@ -159,6 +182,7 @@ describe("POST /consent/:id/respond — contrato by-channel (B5)", () => {
     const res = await app.inject({
       method: "POST",
       url: `/consent/${CONSENT_ID}/respond`,
+      headers: BOT_HEADERS,
       payload: {
         channel: { plataforma: "telegram", chatId: "tg-intruso" },
         decision: "aceptado",
@@ -179,6 +203,7 @@ describe("POST /consent/:id/respond — contrato by-channel (B5)", () => {
     const res = await app.inject({
       method: "POST",
       url: `/consent/${CONSENT_ID}/respond`,
+      headers: BOT_HEADERS,
       payload: {
         channel: { plataforma: "telegram", chatId: "tg-desconocido" },
         decision: "aceptado",
@@ -195,6 +220,7 @@ describe("POST /consent/:id/respond — contrato by-channel (B5)", () => {
     const res = await app.inject({
       method: "POST",
       url: `/consent/${CONSENT_ID}/respond`,
+      headers: BOT_HEADERS,
       payload: {
         channel: SEARCHER_CHANNEL,
         decision: "aceptado",

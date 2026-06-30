@@ -151,6 +151,8 @@ export async function buildApp(
     consentRepo: deps.consentRepo,
     notificationRepo: deps.notificationRepo,
     channelLinkRepo: deps.channelLinkRepo,
+    // Secreto compartido bot<->backend (Modelo B): la ruta /rescatado lo exige.
+    botSecret: deps.botSecret,
   });
 
   return app;

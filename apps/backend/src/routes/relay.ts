@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import type { AppDeps } from "../deps.js";
 import { apiError } from "../errors.js";
+import { BOT_SECRET_HEADER, isBotSecretValid } from "../security.js";
 
 // Rutas del relay de mensajes (Model B — relay_sessions).
 //
@@ -46,9 +47,15 @@ export function registerRelayRoutes(app: FastifyInstance, deps: AppDeps): void {
     schema: {
       params: z.object({ id: z.string().uuid() }),
       body: relayCloseBodySchema,
-      response: { 200: closeResponseSchema, 404: errorResponseSchema },
+      response: { 200: closeResponseSchema, 401: errorResponseSchema, 404: errorResponseSchema },
     },
     handler: async (request, reply) => {
+      // AUTH (Modelo B): exigir el secreto compartido bot<->backend. FAIL-CLOSED
+      // cuando deps.botSecret esta configurado; header faltante/incorrecto -> 401.
+      if (!isBotSecretValid(request.headers[BOT_SECRET_HEADER], deps.botSecret)) {
+        return reply.code(401).send(apiError("unauthorized", "Secreto de bot invalido."));
+      }
+
       const { id: relayId } = request.params;
       const { channel } = request.body;
 

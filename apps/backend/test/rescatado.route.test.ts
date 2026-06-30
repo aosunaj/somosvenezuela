@@ -24,11 +24,16 @@ const SYNTH_REGISTRANT_CHANNEL = "bbbbbbbb-0000-4000-8000-000000000002";
 const SYNTH_SEARCHER_CHANNEL = "aaaaaaaa-0000-4000-8000-000000000001";
 const SYNTH_SEARCHER_CONTACT = "ffffffff-0000-4000-8000-000000000006";
 const SYNTH_CONSENT_ID = "eeeeeeee-0000-4000-8000-000000000005";
+// Secreto compartido bot<->backend (Modelo B). El test lo inyecta en deps y lo
+// envia en el header x-bot-secret de las requests que deben llegar al handler.
+const BOT_SECRET = "test-bot-secret";
+const BOT_HEADERS = { "x-bot-secret": BOT_SECRET };
 
 function makeFakeDeps(
   registrantIsMinor = false,
 ): RescatadoRouteDeps {
   return {
+    botSecret: BOT_SECRET,
     personRepo: {
       async isMinorById(_id) {
         return registrantIsMinor;
@@ -91,10 +96,27 @@ describe("POST /rescatado — ruta", () => {
     await buildApp(makeFakeDeps(false));
   });
 
+  it("401 si falta el header x-bot-secret (Modelo B, fail-closed)", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/rescatado",
+      payload: {
+        personId: SYNTH_PERSON_ID,
+        searchId: SYNTH_SEARCH_ID,
+        registrantChannelId: SYNTH_REGISTRANT_CHANNEL,
+        channel: { plataforma: "telegram", chatId: "tg-100" },
+      },
+      // sin header x-bot-secret
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
   it("200 con body valido (queued)", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/rescatado",
+      headers: BOT_HEADERS,
       payload: {
         personId: SYNTH_PERSON_ID,
         searchId: SYNTH_SEARCH_ID,
@@ -175,6 +197,7 @@ describe("POST /rescatado — outcome human_review", () => {
     const res = await app.inject({
       method: "POST",
       url: "/rescatado",
+      headers: BOT_HEADERS,
       payload: {
         personId: SYNTH_PERSON_ID,
         searchId: SYNTH_SEARCH_ID,
@@ -199,6 +222,7 @@ describe("POST /rescatado — resolucion del lado buscador (A1 + B3)", () => {
     const res = await app.inject({
       method: "POST",
       url: "/rescatado",
+      headers: BOT_HEADERS,
       payload: {
         personId: SYNTH_PERSON_ID,
         searchId: SYNTH_SEARCH_ID,
@@ -221,6 +245,7 @@ describe("POST /rescatado — resolucion del lado buscador (A1 + B3)", () => {
     const res = await app.inject({
       method: "POST",
       url: "/rescatado",
+      headers: BOT_HEADERS,
       payload: {
         personId: SYNTH_PERSON_ID,
         searchId: SYNTH_SEARCH_ID,
